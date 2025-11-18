@@ -500,6 +500,7 @@ class CollapseAdmin(admin.ModelAdmin):
         "image_link",
         "area",
         "volume",
+        "centroid_coordinates",
         "visualize_link",
     )
     list_filter = ("image__acquisition_timestamp", "image__camera")
@@ -514,7 +515,13 @@ class CollapseAdmin(admin.ModelAdmin):
     raw_id_fields = ("image",)
 
     # Lightweight readonly fields and prefetching
-    readonly_fields = ("id", "geom", "created_at", "collapse_preview")
+    readonly_fields = (
+        "id",
+        "geom",
+        "centroid",
+        "created_at",
+        "collapse_preview",
+    )
     list_select_related = ("image", "image__camera")
     ordering = ("image__acquisition_timestamp",)
     list_per_page = 50
@@ -575,19 +582,9 @@ class CollapseAdmin(admin.ModelAdmin):
         except Exception:
             return "Preview not available"
 
-    def get_form(self, request, obj=None, **kwargs):
-        """
-        Replace the default GIS widget with a simple textarea for the 'geom' field to
-        avoid loading map JS and tiles (geometries are image-space only).
-        """
-        form = super().get_form(request, obj, **kwargs)
-        try:
-            from django import forms
-
-            if "geom" in form.base_fields:
-                form.base_fields["geom"].widget = forms.Textarea(
-                    attrs={"cols": 60, "rows": 6, "style": "font-family:monospace"}
-                )
-        except Exception:
-            pass
-        return form
+    @admin.display(description="Centroid Coordinates")
+    def centroid_coordinates(self, obj):
+        """Display the centroid coordinates as a string."""
+        if obj.centroid:
+            return f"({obj.centroid.x:.2f}, {obj.centroid.y:.2f})"
+        return "No centroid"
