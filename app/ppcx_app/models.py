@@ -301,16 +301,17 @@ class Collapse(models.Model):
     geom = gis_models.PolygonField(null=True, blank=True, dim=2, srid=0)
     area = models.FloatField(null=True, blank=True)
     volume = models.FloatField(null=True, blank=True)
-    centroid = models.FloatField(null=True, blank=True)
+    centroid = gis_models.PointField(
+        null=True, blank=True, dim=2, srid=0
+    )  # Change to PointField for centroid
     created_at = models.DateTimeField(auto_now_add=True)
 
     # Compute area if not provided
     def save(self, *args, **kwargs):
         if self.geom is not None:
+            self.centroid = self.geom.centroid
             if self.area is None:
                 self.area = self.geom.area
-            # if self.centroid is None:
-            #     self.centroid = self.geom.centroid
 
         super().save(*args, **kwargs)
 
