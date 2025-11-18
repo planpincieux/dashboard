@@ -858,7 +858,7 @@ def visualize_collapse(request, collapse_id: int) -> HttpResponse:
             cam_name = collapse.image.camera.camera_name or ""
             is_tele_camera = "PPCX_Tele" in cam_name or "Tele" in cam_name
         if is_tele_camera:
-            pil_image = pil_image.rotate(90, expand=True)
+            pil_image = pil_image.rotate(-90, expand=True)
         image_array = np.array(pil_image)
     except Exception as e:
         raise Http404(f"Could not load image: {e}") from e

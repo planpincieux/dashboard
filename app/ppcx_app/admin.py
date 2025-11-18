@@ -495,13 +495,14 @@ class CollapseAdmin(admin.ModelAdmin):
 
     list_display = (
         "id",
+        "date",
+        "image__camera",
         "image_link",
         "area",
         "volume",
-        "created_at",
         "visualize_link",
     )
-    list_filter = ("created_at", "image__camera")
+    list_filter = ("image__acquisition_timestamp", "image__camera")
     search_fields = (
         "id",
         "image__id",
@@ -515,7 +516,7 @@ class CollapseAdmin(admin.ModelAdmin):
     # Lightweight readonly fields and prefetching
     readonly_fields = ("id", "created_at", "area", "volume", "collapse_preview")
     list_select_related = ("image", "image__camera")
-    ordering = ("-created_at",)
+    ordering = ("image__acquisition_timestamp",)
     list_per_page = 50
 
     def get_queryset(self, request):
@@ -523,6 +524,14 @@ class CollapseAdmin(admin.ModelAdmin):
         # ensure we bring back related image + camera to avoid extra queries
         return qs.select_related("image", "image__camera")
 
+    @admin.display(ordering="image__acquisition_timestamp", description="date")
+    def date(self, obj):
+        """Display just the acquisition timestamp with custom label"""
+        if obj and obj.image:
+            return obj.image.acquisition_timestamp
+        return "-"
+
+    @admin.display(description="Image")
     def image_link(self, obj):
         if not obj or not obj.image_id:
             return "-"
@@ -534,8 +543,7 @@ class CollapseAdmin(admin.ModelAdmin):
         except Exception:
             return str(obj.image_id)
 
-    image_link.short_description = "Image"
-
+    @admin.display(description="View")
     def visualize_link(self, obj):
         """Link to visualize collapse geometry on image"""
         if not obj or not obj.pk:
@@ -546,8 +554,7 @@ class CollapseAdmin(admin.ModelAdmin):
         except Exception:
             return "-"
 
-    visualize_link.short_description = "View"
-
+    @admin.display(description="Preview")
     def collapse_preview(self, obj):
         """Show inline preview of collapse visualization in change form"""
         if not obj or not obj.pk:
@@ -567,8 +574,6 @@ class CollapseAdmin(admin.ModelAdmin):
             )
         except Exception:
             return "Preview not available"
-
-    collapse_preview.short_description = "Preview"
 
     def get_form(self, request, obj=None, **kwargs):
         """
