@@ -545,3 +545,215 @@ class CollapseAdmin(admin.ModelAdmin):
         except Exception:
             pass
         return form
+
+
+@admin.register(Collapse)
+class CollapseAdmin(admin.ModelAdmin):
+    """
+    Efficient admin for Collapse model.
+
+    - Use raw_id_fields for the image FK so the admin does not load all Image records.
+    - Avoid loading OSM maps or heavy GIS widgets because geometries are in image-space (no EPSG).
+    - select_related to avoid N+1 when showing image metadata.
+    - small list page size and useful list_display for quick inspection.
+    """
+
+    list_display = (
+        "id",
+        "image_link",
+        "area",
+        "volume",
+        "created_at",
+        "visualize_link",
+    )
+    list_filter = ("created_at", "image__camera")
+    search_fields = (
+        "id",
+        "image__id",
+        "image__file_path",
+        "image__camera__camera_name",
+    )
+
+    # Prevent the admin from loading all Image rows into a dropdown
+    raw_id_fields = ("image",)
+
+    # Lightweight readonly fields and prefetching
+    readonly_fields = ("id", "created_at", "area", "volume", "collapse_preview")
+    list_select_related = ("image", "image__camera")
+    ordering = ("-created_at",)
+    list_per_page = 50
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        # ensure we bring back related image + camera to avoid extra queries
+        return qs.select_related("image", "image__camera")
+
+    def image_link(self, obj):
+        if not obj or not obj.image_id:
+            return "-"
+        try:
+            url = reverse("serve_image", args=[obj.image_id])
+            return format_html(
+                '<a href="{}" target="_blank">Image #{}</a>', url, obj.image_id
+            )
+        except Exception:
+            return str(obj.image_id)
+
+    image_link.short_description = "Image"
+
+    def visualize_link(self, obj):
+        """Link to visualize collapse geometry on image"""
+        if not obj or not obj.pk:
+            return "-"
+        try:
+            url = reverse("visualize_collapse", args=[obj.pk])
+            return format_html('<a href="{}" target="_blank">Visualize</a>', url)
+        except Exception:
+            return "-"
+
+    visualize_link.short_description = "View"
+
+    def collapse_preview(self, obj):
+        """Show inline preview of collapse visualization in change form"""
+        if not obj or not obj.pk:
+            return "Save the collapse first to see preview"
+        try:
+            url = reverse("visualize_collapse", args=[obj.pk])
+            # Add some reasonable default parameters for inline preview
+            preview_url = f"{url}?figsize=8,6&dpi=100"
+            return format_html(
+                '<div style="margin: 10px 0;">'
+                '<img src="{}" style="max-width: 100%; border: 1px solid #ddd; '
+                'border-radius: 4px;" alt="Collapse preview" />'
+                "</div>"
+                '<p><a href="{}" target="_blank">Open full size in new tab</a></p>',
+                preview_url,
+                url,
+            )
+        except Exception:
+            return "Preview not available"
+
+    collapse_preview.short_description = "Preview"
+
+    def get_form(self, request, obj=None, **kwargs):
+        """
+        Replace the default GIS widget with a simple textarea for the 'geom' field to
+        avoid loading map JS and tiles (geometries are image-space only).
+        """
+        form = super().get_form(request, obj, **kwargs)
+        try:
+            from django import forms
+
+            if "geom" in form.base_fields:
+                form.base_fields["geom"].widget = forms.Textarea(
+                    attrs={"cols": 60, "rows": 6, "style": "font-family:monospace"}
+                )
+        except Exception:
+            pass
+        return form
+
+
+@admin.register(Collapse)
+class CollapseAdmin(admin.ModelAdmin):
+    """
+    Efficient admin for Collapse model.
+
+    - Use raw_id_fields for the image FK so the admin does not load all Image records.
+    - Avoid loading OSM maps or heavy GIS widgets because geometries are in image-space (no EPSG).
+    - select_related to avoid N+1 when showing image metadata.
+    - small list page size and useful list_display for quick inspection.
+    """
+
+    list_display = (
+        "id",
+        "image_link",
+        "area",
+        "volume",
+        "created_at",
+        "visualize_link",
+    )
+    list_filter = ("created_at", "image__camera")
+    search_fields = (
+        "id",
+        "image__id",
+        "image__file_path",
+        "image__camera__camera_name",
+    )
+
+    # Prevent the admin from loading all Image rows into a dropdown
+    raw_id_fields = ("image",)
+
+    # Lightweight readonly fields and prefetching
+    readonly_fields = ("id", "created_at", "area", "volume", "collapse_preview")
+    list_select_related = ("image", "image__camera")
+    ordering = ("-created_at",)
+    list_per_page = 50
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        # ensure we bring back related image + camera to avoid extra queries
+        return qs.select_related("image", "image__camera")
+
+    def image_link(self, obj):
+        if not obj or not obj.image_id:
+            return "-"
+        try:
+            url = reverse("serve_image", args=[obj.image_id])
+            return format_html(
+                '<a href="{}" target="_blank">Image #{}</a>', url, obj.image_id
+            )
+        except Exception:
+            return str(obj.image_id)
+
+    image_link.short_description = "Image"
+
+    def visualize_link(self, obj):
+        """Link to visualize collapse geometry on image"""
+        if not obj or not obj.pk:
+            return "-"
+        try:
+            url = reverse("visualize_collapse", args=[obj.pk])
+            return format_html('<a href="{}" target="_blank">Visualize</a>', url)
+        except Exception:
+            return "-"
+
+    visualize_link.short_description = "View"
+
+    def collapse_preview(self, obj):
+        """Show inline preview of collapse visualization in change form"""
+        if not obj or not obj.pk:
+            return "Save the collapse first to see preview"
+        try:
+            url = reverse("visualize_collapse", args=[obj.pk])
+            # Add some reasonable default parameters for inline preview
+            preview_url = f"{url}?figsize=8,6&dpi=100"
+            return format_html(
+                '<div style="margin: 10px 0;">'
+                '<img src="{}" style="max-width: 100%; border: 1px solid #ddd; '
+                'border-radius: 4px;" alt="Collapse preview" />'
+                "</div>"
+                '<p><a href="{}" target="_blank">Open full size in new tab</a></p>',
+                preview_url,
+                url,
+            )
+        except Exception:
+            return "Preview not available"
+
+    collapse_preview.short_description = "Preview"
+
+    def get_form(self, request, obj=None, **kwargs):
+        """
+        Replace the default GIS widget with a simple textarea for the 'geom' field to
+        avoid loading map JS and tiles (geometries are image-space only).
+        """
+        form = super().get_form(request, obj, **kwargs)
+        try:
+            from django import forms
+
+            if "geom" in form.base_fields:
+                form.base_fields["geom"].widget = forms.Textarea(
+                    attrs={"cols": 60, "rows": 6, "style": "font-family:monospace"}
+                )
+        except Exception:
+            pass
+        return form

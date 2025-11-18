@@ -21,7 +21,7 @@ from .functions.visualization import (
     plot_dic_scatter,
     plot_dic_vectors,
 )
-from .models import DIC, Image
+from .models import DIC, Collapse, Image
 
 matplotlib.use("Agg")  # Use non-interactive backend
 
@@ -811,3 +811,109 @@ def set_dic_label(request, dic_id: int):
     dic.label = label
     dic.save(update_fields=["label"])
     return JsonResponse({"status": "ok", "id": dic.id, "label": dic.label})
+
+
+# ...existing code...
+
+
+@require_http_methods(["GET"])
+def visualize_collapse(request, collapse_id: int) -> HttpResponse:
+    """
+    Generate PNG visualization showing collapse geometry overlaid on the associated image.
+
+    Query parameters:
+      - figsize: "W,H" in inches (default "10,8")
+      - dpi: output resolution (default 150)
+      - outline_color: matplotlib color for polygon outline (default "red")
+      - outline_width: line width for polygon outline (default 2)
+      - fill_alpha: transparency for polygon fill (default 0.3)
+    """
+    from shapely import wkt as shapely_wkt
+
+    collapse = get_object_or_404(Collapse, id=collapse_id)
+
+    # Parse visualization parameters
+    figsize_param = request.GET.get("figsize", "")
+    if figsize_param:
+        try:
+            w, h = [float(x) for x in figsize_param.split(",", 1)]
+            figsize = (w, h)
+        except Exception:
+            figsize = (10.0, 8.0)
+    else:
+        figsize = (10.0, 8.0)
+
+    dpi = _parse_int(request.GET.get("dpi"), 150) or 150
+    outline_color = request.GET.get("outline_color", "red")
+    outline_width = _parse_float(request.GET.get("outline_width"), 2.0) or 2.0
+    fill_alpha = _parse_float(request.GET.get("fill_alpha"), 0.3) or 0.3
+
+    # Load the associated image
+    if not collapse.image or not collapse.image.file_path:
+        raise Http404("No image associated with this collapse")
+
+    image_path = collapse.image.file_path
+    if not os.path.exists(image_path):
+        raise Http404("Image file not found on disk")
+
+    try:
+        pil_image = PILImage.open(image_path)
+        image_array = np.array(pil_image)
+    except Exception as e:
+        raise Http404(f"Could not load image: {e}") from e
+
+    # Extract geometry
+    if not collapse.geom:
+        raise Http404("No geometry associated with this collapse")
+
+    try:
+        # Convert Django GEOSGeometry to Shapely for easier coordinate extraction
+        geom_wkt = collapse.geom.wkt
+        shapely_geom = shapely_wkt.loads(geom_wkt)
+        xs, ys = shapely_geom.exterior.xy
+    except Exception as e:
+        raise Http404(f"Could not extract geometry coordinates: {e}") from e
+
+    # Create the plot
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+
+    # Display image
+    ax.imshow(image_array)
+
+    # Draw polygon outline
+    ax.plot(xs, ys, color=outline_color, linewidth=outline_width)
+
+    # Fill polygon with transparency
+    ax.fill(xs, ys, facecolor=outline_color, edgecolor="none", alpha=fill_alpha)
+
+    # Remove axes for cleaner look
+    ax.set_axis_off()
+
+    # Add title with metadata
+    title_parts = [f"Collapse #{collapse_id}"]
+    if collapse.image.acquisition_timestamp:
+        date_str = collapse.image.acquisition_timestamp.strftime("%Y-%m-%d %H:%M")
+        title_parts.append(f"Date: {date_str}")
+    if collapse.area is not None:
+        title_parts.append(f"Area: {collapse.area:.1f} px²")
+    if collapse.volume is not None:
+        title_parts.append(f"Volume: {collapse.volume:.1f} m³")
+
+    fig.suptitle(" | ".join(title_parts), fontsize=12)
+    fig.tight_layout()
+
+    # Render to bytes
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight", dpi=dpi)
+    plt.close(fig)
+    buf.seek(0)
+
+    # Build informative filename
+    date_str = "unknown"
+    if collapse.image and collapse.image.acquisition_timestamp:
+        date_str = collapse.image.acquisition_timestamp.strftime("%Y-%m-%d-%H-%M")
+    filename = f"collapse_{collapse_id}_{date_str}.png"
+
+    response = HttpResponse(buf.getvalue(), content_type="image/png")
+    response["Content-Disposition"] = f'inline; filename="{filename}"'
+    return response
