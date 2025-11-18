@@ -170,6 +170,9 @@ class Image(models.Model):
     width_px = models.IntegerField(null=True, blank=True)
     height_px = models.IntegerField(null=True, blank=True)
     exif_data = models.JSONField(null=True, blank=True)
+    rotation = models.IntegerField(
+        default=0, help_text="Rotation in degrees (0, 90, 180, 270)"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     label = models.CharField(max_length=100, null=True, blank=True)
 
@@ -177,6 +180,23 @@ class Image(models.Model):
     def file_name(self):
         """Extract filename from file_path."""
         return Path(self.file_path).name
+
+    def save(self, *args, **kwargs):
+        """Extract rotation from EXIF data if available."""
+        if self.exif_data and isinstance(self.exif_data, dict):
+            orientation = self.exif_data.get("Image Orientation", "")
+
+            # Map EXIF orientation to rotation degrees
+            orientation_map = {
+                "Horizontal (normal)": 0,
+                "Rotated 90 CW": 90,
+                "Rotated 180": 180,
+                "Rotated 90 CCW": 270,
+                "Rotated 270 CW": 270,
+            }
+            self.rotation = orientation_map.get(orientation, 0)
+
+        super().save(*args, **kwargs)
 
     class Meta:
         constraints = [

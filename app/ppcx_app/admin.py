@@ -514,7 +514,7 @@ class CollapseAdmin(admin.ModelAdmin):
     raw_id_fields = ("image",)
 
     # Lightweight readonly fields and prefetching
-    readonly_fields = ("id", "created_at", "area", "volume", "collapse_preview")
+    readonly_fields = ("id", "geom", "created_at", "collapse_preview")
     list_select_related = ("image", "image__camera")
     ordering = ("image__acquisition_timestamp",)
     list_per_page = 50

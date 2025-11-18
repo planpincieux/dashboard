@@ -17,7 +17,7 @@ urlpatterns = [
     path("dic/visualizer/", views.dic_visualizer, name="dic_visualizer"),
     path("dic/<int:dic_id>/set_label/", views.set_dic_label, name="set_dic_label"),
     path(
-        "API/collapse/<int:collapse_id>/visualize/",
+        "collapse/<int:collapse_id>/visualize/",
         views.visualize_collapse,
         name="visualize_collapse",
     ),

@@ -1,4 +1,5 @@
 import io
+import json
 import mimetypes
 import os
 from datetime import datetime
@@ -299,12 +300,11 @@ def visualize_dic(request, dic_id: int) -> HttpResponse:
             image_path = dic.master_image.file_path if dic.master_image else None
             if image_path and os.path.exists(image_path):
                 pil_image = PILImage.open(image_path)
-                is_tele_camera = False
-                if hasattr(dic.master_image, "camera") and dic.master_image.camera:
-                    cam_name = dic.master_image.camera.camera_name or ""
-                    is_tele_camera = "PPCX_Tele" in cam_name or "Tele" in cam_name
-                if is_tele_camera:
-                    pil_image = pil_image.rotate(90, expand=True)
+                # Use the rotation field from the model
+                if dic.master_image.rotation and dic.master_image.rotation != 0:
+                    pil_image = pil_image.rotate(
+                        -dic.master_image.rotation, expand=True
+                    )
                 background_image = np.array(pil_image)
         except Exception:
             background_image = None
@@ -416,12 +416,13 @@ def serve_dic_quiver(request, dic_id: int) -> HttpResponse:
         image_path = dic.master_image.file_path if dic.master_image else None
         if image_path and os.path.exists(image_path):
             pil_image = PILImage.open(image_path)
-            is_tele_camera = False
-            if hasattr(dic.master_image, "camera") and dic.master_image.camera:
-                cam_name = dic.master_image.camera.camera_name or ""
-                is_tele_camera = "PPCX_Tele" in cam_name or "Tele" in cam_name
-            if is_tele_camera and rotate_tele:
-                pil_image = pil_image.rotate(90, expand=True)
+            # Use rotation field instead of camera name check
+            if (
+                rotate_tele
+                and dic.master_image.rotation
+                and dic.master_image.rotation != 0
+            ):
+                pil_image = pil_image.rotate(-dic.master_image.rotation, expand=True)
             background_image = np.array(pil_image)
             # ensure BGR uint8 for OpenCV helper
             if background_image.ndim == 3 and background_image.shape[2] == 3:
@@ -853,12 +854,9 @@ def visualize_collapse(request, collapse_id: int) -> HttpResponse:
         raise Http404("Image file not found on disk")
     try:
         pil_image = PILImage.open(image_path)
-        is_tele_camera = False
-        if hasattr(collapse.image, "camera") and collapse.image.camera:
-            cam_name = collapse.image.camera.camera_name or ""
-            is_tele_camera = "PPCX_Tele" in cam_name or "Tele" in cam_name
-        if is_tele_camera:
-            pil_image = pil_image.rotate(-90, expand=True)
+        # Use rotation field from the model
+        if collapse.image.rotation and collapse.image.rotation != 0:
+            pil_image = pil_image.rotate(-collapse.image.rotation, expand=True)
         image_array = np.array(pil_image)
     except Exception as e:
         raise Http404(f"Could not load image: {e}") from e
