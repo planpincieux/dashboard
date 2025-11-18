@@ -281,7 +281,7 @@ class Collapse(models.Model):
     geom = gis_models.PolygonField(null=True, blank=True, dim=2, srid=0)
     area = models.FloatField(null=True, blank=True)
     volume = models.FloatField(null=True, blank=True)
-    centroid = models.FloatField(null=True, blank=True)
+    centroid = gis_models.PointField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     # Compute area if not provided
@@ -291,6 +291,8 @@ class Collapse(models.Model):
                 self.area = self.geom.area
             if self.centroid is None:
                 self.centroid = self.geom.centroid
+
+        super().save(*args, **kwargs)
 
     class Meta:
         db_table = "ppcx_app_collapse"
