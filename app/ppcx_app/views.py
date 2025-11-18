@@ -813,9 +813,6 @@ def set_dic_label(request, dic_id: int):
     return JsonResponse({"status": "ok", "id": dic.id, "label": dic.label})
 
 
-# ...existing code...
-
-
 @require_http_methods(["GET"])
 def visualize_collapse(request, collapse_id: int) -> HttpResponse:
     """
@@ -851,13 +848,17 @@ def visualize_collapse(request, collapse_id: int) -> HttpResponse:
     # Load the associated image
     if not collapse.image or not collapse.image.file_path:
         raise Http404("No image associated with this collapse")
-
     image_path = collapse.image.file_path
     if not os.path.exists(image_path):
         raise Http404("Image file not found on disk")
-
     try:
         pil_image = PILImage.open(image_path)
+        is_tele_camera = False
+        if hasattr(collapse.image, "camera") and collapse.image.camera:
+            cam_name = collapse.image.camera.camera_name or ""
+            is_tele_camera = "PPCX_Tele" in cam_name or "Tele" in cam_name
+        if is_tele_camera:
+            pil_image = pil_image.rotate(90, expand=True)
         image_array = np.array(pil_image)
     except Exception as e:
         raise Http404(f"Could not load image: {e}") from e
