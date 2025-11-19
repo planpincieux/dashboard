@@ -364,7 +364,19 @@ class ImageAdmin(admin.ModelAdmin):
     def view_image(self, obj):
         if obj.file_path and obj.id:
             url = reverse("serve_image", args=[obj.id])
-            return format_html('<a href="{}" target="_blank">View Image</a>', url)
+            # Format the date for display in title
+            date_str = (
+                obj.acquisition_timestamp.strftime("%Y-%m-%d %H:%M")
+                if obj.acquisition_timestamp
+                else "No date"
+            )
+            title = f"Image {obj.id} - {date_str}"
+            return format_html(
+                '<a href="{}" target="_blank" title="{}">{}</a>',
+                url,
+                title,
+                "View Image",
+            )
         return ""
 
     def dic_results(self, obj):

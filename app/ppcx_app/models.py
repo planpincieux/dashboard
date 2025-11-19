@@ -299,6 +299,9 @@ def delete_dic_file_on_signal(sender, instance, **kwargs):
 class Collapse(models.Model):
     image = models.ForeignKey(Image, on_delete=models.PROTECT, related_name="collapses")
     geom = gis_models.PolygonField(null=True, blank=True, dim=2, srid=0)
+    # geom_qgis = gis_models.GeometryField(
+    #     srid=0, dim=2, editable=False, null=True, blank=True
+    # )  # Auto-populated
     area = models.FloatField(null=True, blank=True)
     volume = models.FloatField(null=True, blank=True)
     centroid = gis_models.PointField(

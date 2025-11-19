@@ -844,7 +844,7 @@ def visualize_collapse(request, collapse_id: int) -> HttpResponse:
     dpi = _parse_int(request.GET.get("dpi"), 150) or 150
     outline_color = request.GET.get("outline_color", "red")
     outline_width = _parse_float(request.GET.get("outline_width"), 2.0) or 2.0
-    fill_alpha = _parse_float(request.GET.get("fill_alpha"), 0.3) or 0.3
+    fill_alpha = _parse_float(request.GET.get("fill_alpha"), 0.0) or 0.0
 
     # Load the associated image
     if not collapse.image or not collapse.image.file_path:
