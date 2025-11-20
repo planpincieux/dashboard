@@ -297,6 +297,7 @@ def delete_dic_file_on_signal(sender, instance, **kwargs):
 
 
 class Collapse(models.Model):
+    date = models.DateField()  # Date AFTER collapse (mandatory)
     image = models.ForeignKey(Image, on_delete=models.PROTECT, related_name="collapses")
     geom = gis_models.MultiPolygonField(
         null=True,
