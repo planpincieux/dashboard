@@ -530,10 +530,13 @@ class CollapseAdmin(admin.ModelAdmin):
     readonly_fields = (
         "id",
         "geom",
+        "geom_qgis",
         "centroid",
         "created_at",
         "collapse_preview",
     )
+    # Exclude geom_qgis from the form since it's auto-generated
+    exclude = ("geom_qgis",)
     list_select_related = ("image", "image__camera")
     ordering = ("image__acquisition_timestamp",)
     # list_per_page = 50

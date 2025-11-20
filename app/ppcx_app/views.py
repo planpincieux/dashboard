@@ -869,7 +869,12 @@ def visualize_collapse(request, collapse_id: int) -> HttpResponse:
         # Convert Django GEOSGeometry to Shapely for easier coordinate extraction
         geom_wkt = collapse.geom.wkt
         shapely_geom = shapely_wkt.loads(geom_wkt)
-        xs, ys = shapely_geom.exterior.xy
+        if shapely_geom.geom_type == "Polygon":
+            xs, ys = shapely_geom.exterior.xy
+        elif shapely_geom.geom_type == "MultiPolygon":
+            for poly in shapely_geom.geoms:
+                xs, ys = poly.exterior.xy
+        # xs, ys = shapely_geom.exterior.xy
     except Exception as e:
         raise Http404(f"Could not extract geometry coordinates: {e}") from e
 
@@ -915,4 +920,62 @@ def visualize_collapse(request, collapse_id: int) -> HttpResponse:
 
     response = HttpResponse(buf.getvalue(), content_type="image/png")
     response["Content-Disposition"] = f'inline; filename="{filename}"'
+    return response
+
+
+@require_http_methods(["GET"])
+def collapses_geojson(request) -> HttpResponse:
+    """
+    Serve all collapses as GeoJSON for use in QGIS or other GIS software.
+    Uses geom_qgis field which has Y-coordinates inverted for proper QGIS display.
+    """
+    qs = Collapse.objects.select_related("image__camera").all()
+
+    # Apply filters (same as before)
+    # ...existing filter code...
+
+    # Build GeoJSON using geom_qgis instead of geom
+    features = []
+    for collapse in qs:
+        if not collapse.geom_qgis:
+            continue
+
+        # Handle MultiPolygon
+        if collapse.geom_qgis.geom_type == "MultiPolygon":
+            coordinates = [
+                [[[x, y] for x, y in polygon[0].coords]]
+                for polygon in collapse.geom_qgis
+            ]
+        else:
+            coordinates = [[[x, y] for x, y in collapse.geom_qgis.coords[0]]]
+
+        feature = {
+            "type": "Feature",
+            "id": collapse.id,
+            "geometry": {"type": "MultiPolygon", "coordinates": coordinates},
+            "properties": {
+                "collapse_id": collapse.id,
+                "image_id": collapse.image_id,
+                "camera_name": collapse.image.camera.camera_name
+                if collapse.image.camera
+                else None,
+                "acquisition_date": collapse.image.acquisition_timestamp.isoformat()
+                if collapse.image.acquisition_timestamp
+                else None,
+                "area_px": collapse.area,
+                "volume_m3": collapse.volume,
+                "created_at": collapse.created_at.isoformat()
+                if collapse.created_at
+                else None,
+            },
+        }
+        features.append(feature)
+
+    geojson = {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+    response = JsonResponse(geojson, safe=False)
+    response["Content-Disposition"] = 'attachment; filename="collapses.geojson"'
     return response
