@@ -536,7 +536,7 @@ class CollapseAdmin(admin.ModelAdmin):
     )
     list_select_related = ("image", "image__camera")
     ordering = ("image__acquisition_timestamp",)
-    list_per_page = 50
+    # list_per_page = 50
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)

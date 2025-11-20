@@ -265,7 +265,7 @@ def visualize_dic(request, dic_id: int) -> HttpResponse:
 
     # filtering params
     min_velocity = _parse_float(request.GET.get("min_velocity"), None)
-    filter_outliers = _parse_bool(request.GET.get("filter_outliers"), True)
+    filter_outliers = _parse_bool(request.GET.get("filter_outliers"), False)
     tails_percentile = _parse_float(request.GET.get("tails_percentile"), 0.01) or 0.01
     subsample = _parse_int(request.GET.get("subsample"), 1) or 1
 

@@ -42,7 +42,7 @@ def plot_dic_vectors(
         raise ValueError("Input arrays are empty")
 
     # Set up color normalization
-    max_magnitude = vmax if vmax is not None else np.max(magnitudes)
+    max_magnitude = vmax if vmax is not None else np.percentile(magnitudes, 99)
     norm = Normalize(vmin=vmin, vmax=max_magnitude)
 
     # Set up figure and axes

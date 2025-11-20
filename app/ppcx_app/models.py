@@ -298,18 +298,28 @@ def delete_dic_file_on_signal(sender, instance, **kwargs):
 
 class Collapse(models.Model):
     image = models.ForeignKey(Image, on_delete=models.PROTECT, related_name="collapses")
-    geom = gis_models.PolygonField(null=True, blank=True, dim=2, srid=0)
-    # geom_qgis = gis_models.GeometryField(
-    #     srid=0, dim=2, editable=False, null=True, blank=True
-    # )  # Auto-populated
+    geom = gis_models.MultiPolygonField(
+        null=True,
+        blank=True,
+        dim=2,
+        srid=0,
+        help_text="Original geometry in image coordinates (Y-axis down)",
+    )
+    geom_qgis = gis_models.MultiPolygonField(
+        null=True,
+        blank=True,
+        dim=2,
+        srid=0,
+        editable=False,
+        help_text="Y-inverted geometry for QGIS visualization (Y-axis up)",
+    )
     area = models.FloatField(null=True, blank=True)
     volume = models.FloatField(null=True, blank=True)
-    centroid = gis_models.PointField(
-        null=True, blank=True, dim=2, srid=0
-    )  # Change to PointField for centroid
+    centroid = gis_models.PointField(null=True, blank=True, dim=2, srid=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # Compute area if not provided
+    # Compute area and centroid if not provided
+    # Note: geom_qgis is handled by database triggers
     def save(self, *args, **kwargs):
         if self.geom is not None:
             self.centroid = self.geom.centroid
@@ -320,6 +330,7 @@ class Collapse(models.Model):
 
     class Meta:
         db_table = "ppcx_app_collapse"
+        managed = True  # Django still manages this table for queries
 
     def __str__(self) -> str:
         return f"Collapse {self.pk} (image={self.image})"
