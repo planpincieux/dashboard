@@ -41,8 +41,9 @@ services:
 
     volumes:
       - ./app:/ppcx/app:rw # Used to edit code on host and directly see changes in container. Not needed in production.
-      - /home/fioli/storage/fms:/ppcx/fms_data:ro # Read-only mount of large image dataset
-      - dic_data:/ppcx/data:rw # Persistent storage for DIC data
+      - dic_data:/ppcx/data:rw # Persistent volume to store h5 DIC data
+      - ppcx_data:/data/ppcx_data:ro # Read-only mount of GMG FTP datax
+      - fms_data:/ppcx/fms_data:ro # Read-only mount of FMS data # TODO: move it to /data/fms_data for consistency
     ports:
       - "8080:8000"
     networks: [ppcx_net]
@@ -57,6 +58,16 @@ networks:
 volumes:
   db_data:
   dic_data:
+  ppcx_data:
+    driver_opts:
+        type: none
+        device: /home/fioli/storage/GMG_ftp/Dati/Planpincieux
+        o: bind
+  fms_data:
+    driver_opts:
+          type: none
+          device: /home/fioli/storage/fms
+          o: bind
 
 secrets:
  db_password: 
