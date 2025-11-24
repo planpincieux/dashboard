@@ -22,4 +22,5 @@ dependencies = [
     "python-decouple>=3.8.0",
     "requests>=2.32.4",
     "tqdm>=4.66.1",
+    "shapely>=2.1.0",
 ]
