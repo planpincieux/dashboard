@@ -233,17 +233,30 @@ class DIC(models.Model):
     master_timestamp = models.DateTimeField(null=True, blank=True)
     slave_timestamp = models.DateTimeField(null=True, blank=True)
     dt_hours = models.IntegerField(null=True, blank=True)
-    label = models.CharField(max_length=100, null=True, blank=True)
     software_used = models.CharField(max_length=100, null=True, blank=True)
     software_version = models.CharField(max_length=50, null=True, blank=True)
     processing_parameters = models.JSONField(null=True, blank=True)
+    use_ensemble_correlation = models.BooleanField(
+        default=False, help_text="Whether ensemble correlation was used"
+    )
+    ensemble_size = models.IntegerField(
+        null=True, blank=True, help_text="Number of image pairs in the ensemble"
+    )
+    # list of master/slave image id pairs used when ensemble correlation is active.
+    # Format: [{"master": <image_id>, "slave": <image_id>}, ...]
+    ensemble_image_pairs = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="List of {'master': image_id, 'slave': image_id} pairs used for ensemble correlation",
+    )
+    label = models.CharField(max_length=100, null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
-    use_ensemble_correlation = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
             models.CheckConstraint(
-                check=~models.Q(master_timestamp=models.F("slave_timestamp")),
+                condition=~models.Q(master_timestamp=models.F("slave_timestamp")),
                 name="different_timestamps",
             ),
             models.UniqueConstraint(
@@ -261,6 +274,32 @@ class DIC(models.Model):
         if not self.dt_hours and self.master_timestamp and self.slave_timestamp:
             time_diff = self.slave_timestamp - self.master_timestamp
             self.dt_hours = round(time_diff.total_seconds() / 3600)
+
+        # Enforce logic: only keep ensemble_image_pairs if use_ensemble_correlation is true
+        if not self.use_ensemble_correlation:
+            self.ensemble_image_pairs = None
+        else:
+            # Basic validation of structure
+            if self.ensemble_image_pairs:
+                if not isinstance(self.ensemble_image_pairs, list):
+                    raise ValueError("ensemble_image_pairs must be a list of dicts")
+                cleaned = []
+                for entry in self.ensemble_image_pairs:
+                    if not isinstance(entry, dict):
+                        raise ValueError("Each ensemble pair must be a dict")
+                    if "master" not in entry or "slave" not in entry:
+                        raise ValueError(
+                            "Each pair must have 'master' and 'slave' keys"
+                        )
+                    if not isinstance(entry["master"], int) or not isinstance(
+                        entry["slave"], int
+                    ):
+                        raise ValueError(
+                            "'master' and 'slave' must be integer image IDs"
+                        )
+                    cleaned.append({"master": entry["master"], "slave": entry["slave"]})
+                self.ensemble_image_pairs = cleaned
+
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
@@ -281,6 +320,16 @@ class DIC(models.Model):
 
     def __str__(self):
         return f"DIC: {self.master_timestamp} → {self.slave_timestamp}"
+
+    def get_ensemble_images(self):
+        """Return queryset of all unique images referenced in ensemble_image_pairs."""
+        if not (self.use_ensemble_correlation and self.ensemble_image_pairs):
+            return Image.objects.none()
+        ids = set()
+        for p in self.ensemble_image_pairs:
+            ids.add(p["master"])
+            ids.add(p["slave"])
+        return Image.objects.filter(id__in=ids)
 
 
 @receiver(post_delete, sender=DIC)

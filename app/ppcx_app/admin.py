@@ -490,8 +490,32 @@ class DICAdmin(admin.ModelAdmin):
             return format_html('<a href="{}" target="_blank">Download Quiver</a>', url)
         return "No data available"
 
+    # In admin.py DIC admin class
+    @admin.display(description="Ensemble pairs")
+    def ensemble_pairs_count(self, obj):
+        if obj.use_ensemble_correlation and obj.ensemble_image_pairs:
+            return len(obj.ensemble_image_pairs)
+        return 0
+
 
 # === Collapses ===
+class HasValidVolumeFilter(admin.SimpleListFilter):
+    title = "valid volume"
+    parameter_name = "has_volume"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("0", "Volume empty (null)"),
+            ("pos", "Volume > 0"),
+        )
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        if val == "0":
+            return queryset.filter(volume__isnull=True)
+        if val == "pos":
+            return queryset.filter(volume__isnull=False, volume__gt=0)
+        return queryset
 
 
 @admin.register(Collapse)
@@ -515,7 +539,11 @@ class CollapseAdmin(admin.ModelAdmin):
         "centroid_coordinates",
         "visualize_link",
     )
-    list_filter = ("image__acquisition_timestamp", "image__camera")
+    list_filter = (
+        "image__acquisition_timestamp",
+        "image__camera",
+        HasValidVolumeFilter,
+    )
     search_fields = (
         "id",
         "image__id",
