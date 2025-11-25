@@ -181,6 +181,16 @@ class Image(models.Model):
         """Extract filename from file_path."""
         return Path(self.file_path).name
 
+    @property
+    def date(self):
+        """Extract date from acquisition_timestamp."""
+        return self.acquisition_timestamp.date()
+
+    @property
+    def datetime(self):
+        """Alias for acquisition_timestamp."""
+        return self.acquisition_timestamp
+
     def save(self, *args, **kwargs):
         """Extract rotation from EXIF data if available."""
         if self.exif_data and isinstance(self.exif_data, dict):
@@ -346,7 +356,7 @@ def delete_dic_file_on_signal(sender, instance, **kwargs):
 
 
 class Collapse(models.Model):
-    date = models.DateField()  # Date AFTER collapse (mandatory)
+    # date = models.DateField(null=False)  # Date AFTER collapse (mandatory)
     image = models.ForeignKey(Image, on_delete=models.PROTECT, related_name="collapses")
     geom = gis_models.MultiPolygonField(
         null=True,
