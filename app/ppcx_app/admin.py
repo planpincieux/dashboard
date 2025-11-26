@@ -499,6 +499,11 @@ class DICAdmin(admin.ModelAdmin):
 
 
 # === Collapses ===
+# Create filters for Image model (acquisition_timestamp)
+CollapseYearFilter = YearFilterBase.create("image__acquisition_timestamp")
+CollapseMonthFilter = MonthFilterBase.create("image__acquisition_timestamp")
+
+
 class HasValidVolumeFilter(admin.SimpleListFilter):
     title = "valid volume"
     parameter_name = "has_volume"
@@ -543,6 +548,8 @@ class CollapseAdmin(admin.ModelAdmin):
         "image__acquisition_timestamp",
         "image__camera",
         HasValidVolumeFilter,
+        CollapseYearFilter,
+        CollapseMonthFilter,
     )
     search_fields = (
         "id",
@@ -550,6 +557,7 @@ class CollapseAdmin(admin.ModelAdmin):
         "image__file_path",
         "image__camera__camera_name",
     )
+    date_hierarchy = "image__acquisition_timestamp"
 
     # Prevent the admin from loading all Image rows into a dropdown
     raw_id_fields = ("image",)
