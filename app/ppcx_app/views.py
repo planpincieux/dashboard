@@ -16,6 +16,7 @@ from django.urls import reverse
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
 from PIL import Image as PILImage
+from scipy.spatial import KDTree
 
 from .functions.visualization import (
     draw_quiver_on_image_cv2,
@@ -979,3 +980,210 @@ def collapses_geojson(request) -> HttpResponse:
     response = JsonResponse(geojson, safe=False)
     response["Content-Disposition"] = 'attachment; filename="collapses.geojson"'
     return response
+
+
+@require_http_methods(["GET"])
+def velocity_timeseries_viewer(request) -> HttpResponse:
+    """
+    Interactive viewer to click on image and see velocity time series at that point.
+
+    Query params:
+      - image_id: base image to display
+      - x, y: clicked coordinates (optional, for initial plot)
+      - camera_id: filter DIC by camera
+      - days_back: how many days to look back (default 30)
+      - search_radius: max distance in pixels to find nearest DIC node (default 10)
+    """
+    image_id = request.GET.get("image_id")
+    x_click = _parse_float(request.GET.get("x"), None)
+    y_click = _parse_float(request.GET.get("y"), None)
+    camera_id = request.GET.get("camera_id")
+    days_back = _parse_int(request.GET.get("days_back"), 30) or 30
+    search_radius = _parse_float(request.GET.get("search_radius"), 10.0) or 10.0
+
+    # Get base image
+    if image_id:
+        base_image = get_object_or_404(Image, id=int(image_id))
+    else:
+        # Default to most recent image
+        base_image = Image.objects.order_by("-acquisition_timestamp").first()
+        if not base_image:
+            return HttpResponse("No images available", status=404)
+
+    # Load background image
+    if not os.path.exists(base_image.file_path):
+        return HttpResponse("Image file not found", status=404)
+
+    try:
+        from PIL import Image as PILImage
+
+        pil_img = PILImage.open(base_image.file_path)
+        if base_image.rotation and base_image.rotation != 0:
+            pil_img = pil_img.rotate(-base_image.rotation, expand=True)
+        img_array = np.array(pil_img)
+    except Exception as e:
+        return HttpResponse(f"Could not load image: {e}", status=500)
+
+    # Time series data (if coordinates provided)
+    ts_data = None
+    if x_click is not None and y_click is not None:
+        ts_data = _extract_velocity_timeseries(
+            camera_id=base_image.camera_id if not camera_id else int(camera_id),
+            x=x_click,
+            y=y_click,
+            days_back=days_back,
+            search_radius=search_radius,
+            reference_date=base_image.acquisition_timestamp.date(),
+        )
+
+    context = {
+        "base_image": base_image,
+        "image_width": img_array.shape[1],
+        "image_height": img_array.shape[0],
+        "x_click": x_click,
+        "y_click": y_click,
+        "ts_data": ts_data,
+        "days_back": days_back,
+        "search_radius": search_radius,
+    }
+
+    return render(request, "ppcx_app/velocity_timeseries.html", context)
+
+
+@require_http_methods(["POST"])
+@csrf_protect
+def get_velocity_timeseries_data(request) -> JsonResponse:
+    """
+    API endpoint to fetch velocity time series data for a clicked point.
+
+    POST JSON body:
+      {
+        "x": float,
+        "y": float,
+        "camera_id": int,
+        "days_back": int (optional, default 30),
+        "search_radius": float (optional, default 10.0)
+      }
+
+    Returns JSON with plotly-compatible data.
+    """
+    try:
+        body = json.loads(request.body.decode("utf-8"))
+        x = float(body["x"])
+        y = float(body["y"])
+        camera_id = int(body["camera_id"])
+        days_back = int(body.get("days_back", 30))
+        search_radius = float(body.get("search_radius", 10.0))
+        reference_date = body.get("reference_date")  # optional YYYY-MM-DD
+
+        if reference_date:
+            reference_date = datetime.fromisoformat(reference_date).date()
+        else:
+            reference_date = datetime.now().date()
+
+    except (KeyError, ValueError, json.JSONDecodeError) as e:
+        return JsonResponse({"error": f"Invalid request: {e}"}, status=400)
+
+    ts_data = _extract_velocity_timeseries(
+        camera_id=camera_id,
+        x=x,
+        y=y,
+        days_back=days_back,
+        search_radius=search_radius,
+        reference_date=reference_date,
+    )
+
+    if ts_data is None or len(ts_data["dates"]) == 0:
+        return JsonResponse({"error": "No data found near clicked point"}, status=404)
+
+    return JsonResponse(ts_data)
+
+
+def _extract_velocity_timeseries(
+    camera_id: int,
+    x: float,
+    y: float,
+    days_back: int,
+    search_radius: float,
+    reference_date,
+) -> dict | None:
+    """
+    Extract velocity time series for a point using KDTree search.
+
+    Returns dict with:
+      - dates: list of datetime strings
+      - velocities: list of magnitudes
+      - u_components: list of u values
+      - v_components: list of v values
+      - distances: list of distances from clicked point to nearest node
+      - dt_hours: list of time differences
+    """
+    from datetime import timedelta
+
+    start_date = reference_date - timedelta(days=days_back)
+
+    # Query DICs for the camera and time range
+    dics = (
+        DIC.objects.filter(
+            master_image__camera_id=camera_id,
+            master_timestamp__date__gte=start_date,
+            master_timestamp__date__lte=reference_date,
+        )
+        .select_related("master_image")
+        .order_by("master_timestamp")
+    )
+
+    if not dics.exists():
+        return None
+
+    results = {
+        "dates": [],
+        "velocities": [],
+        "u_components": [],
+        "v_components": [],
+        "distances": [],
+        "dt_hours": [],
+        "master_dates": [],
+        "slave_dates": [],
+    }
+
+    for dic in dics:
+        if not dic.result_file_path or not os.path.exists(dic.result_file_path):
+            continue
+
+        try:
+            with h5py.File(dic.result_file_path, "r") as f:
+                points = f["points"][()] if "points" in f else None
+                vectors = f["vectors"][()] if "vectors" in f else None
+                magnitudes = f["magnitudes"][()] if "magnitudes" in f else None
+
+            if points is None or magnitudes is None or len(points) == 0:
+                continue
+
+            # Build KDTree and find nearest point
+            tree = KDTree(points)
+            distance, idx = tree.query([x, y], k=1)
+
+            if distance > search_radius:
+                continue
+
+            # Extract velocity at nearest point
+            velocity = float(magnitudes[idx])
+            u = float(vectors[idx, 0]) if vectors is not None else 0.0
+            v = float(vectors[idx, 1]) if vectors is not None else 0.0
+
+            results["dates"].append(dic.master_timestamp.isoformat())
+            results["master_dates"].append(dic.master_timestamp.isoformat())
+            results["slave_dates"].append(
+                dic.slave_timestamp.isoformat() if dic.slave_timestamp else None
+            )
+            results["velocities"].append(velocity)
+            results["u_components"].append(u)
+            results["v_components"].append(v)
+            results["distances"].append(float(distance))
+            results["dt_hours"].append(dic.dt_hours if dic.dt_hours else None)
+
+        except Exception:
+            continue
+
+    return results if len(results["dates"]) > 0 else None

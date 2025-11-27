@@ -353,6 +353,12 @@ def delete_dic_file_on_signal(sender, instance, **kwargs):
 
 
 ## ================ Collapses Model ================
+class CollapseType(models.IntegerChoices):
+    """Types of collapse events."""
+
+    DISAGGREGATION = 1, "Disaggregation"
+    SLAB = 2, "Slab"
+    WATER_OUTBURST = 3, "Water outburst"
 
 
 class Collapse(models.Model):
@@ -373,9 +379,16 @@ class Collapse(models.Model):
         editable=False,
         help_text="Y-inverted geometry for QGIS visualization (Y-axis up)",
     )
+    type = models.IntegerField(
+        choices=CollapseType.choices,
+        null=True,
+        blank=True,
+        help_text="Type of collapse event",
+    )
     area = models.FloatField(null=True, blank=True)
     volume = models.FloatField(null=True, blank=True)
     centroid = gis_models.PointField(null=True, blank=True, dim=2, srid=0)
+    notes = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     # Compute area and centroid if not provided
