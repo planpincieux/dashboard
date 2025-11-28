@@ -169,7 +169,7 @@ if __name__ == "__main__":
                 image_ids = fetch_image_ids(
                     db_engine,
                     date=date.isoformat(),
-                    order_by="acquisition_timestamp DESC",
+                    order_by="datetime DESC",
                 )
                 images_metadata = fetch_image_metadata_by_ids(
                     db_engine=db_engine, image_id=image_ids
@@ -182,7 +182,7 @@ if __name__ == "__main__":
             idx = len(image_ids) // 2
             image_id = image_ids[idx]
             logger.debug(
-                f"Selected image ID: {image_id} - {images_metadata.iloc[idx].acquisition_timestamp}"
+                f"Selected image ID: {image_id} - {images_metadata.iloc[idx].datetime}"
             )
 
             # Read geometry from file

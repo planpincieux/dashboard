@@ -832,8 +832,8 @@ def visualize_collapse(request, collapse_id: int) -> HttpResponse:
 
     # Add title with metadata
     title_parts = [f"Collapse #{collapse_id}"]
-    if collapse.image.acquisition_timestamp:
-        date_str = collapse.image.acquisition_timestamp.strftime("%Y-%m-%d %H:%M")
+    if collapse.image.datetime:
+        date_str = collapse.image.datetime.strftime("%Y-%m-%d %H:%M")
         title_parts.append(f"Date: {date_str}")
     if collapse.area is not None:
         title_parts.append(f"Area: {collapse.area:.1f} px²")
@@ -851,8 +851,8 @@ def visualize_collapse(request, collapse_id: int) -> HttpResponse:
 
     # Build informative filename
     date_str = "unknown"
-    if collapse.image and collapse.image.acquisition_timestamp:
-        date_str = collapse.image.acquisition_timestamp.strftime("%Y-%m-%d-%H-%M")
+    if collapse.image and collapse.image.datetime:
+        date_str = collapse.image.datetime.strftime("%Y-%m-%d-%H-%M")
     filename = f"collapse_{collapse_id}_{date_str}.png"
 
     response = HttpResponse(buf.getvalue(), content_type="image/png")
@@ -896,8 +896,8 @@ def collapses_geojson(request) -> HttpResponse:
                 "camera_name": collapse.image.camera.camera_name
                 if collapse.image.camera
                 else None,
-                "acquisition_date": collapse.image.acquisition_timestamp.isoformat()
-                if collapse.image.acquisition_timestamp
+                "acquisition_date": collapse.image.datetime.isoformat()
+                if collapse.image.datetime
                 else None,
                 "area_px": collapse.area,
                 "volume_m3": collapse.volume,
@@ -943,7 +943,7 @@ def velocity_timeseries_viewer(request) -> HttpResponse:
         base_image = get_object_or_404(Image, id=int(image_id))
     else:
         # Default to most recent image
-        base_image = Image.objects.order_by("-acquisition_timestamp").first()
+        base_image = Image.objects.order_by("-datetime").first()
         if not base_image:
             return HttpResponse("No images available", status=404)
 
@@ -968,7 +968,7 @@ def velocity_timeseries_viewer(request) -> HttpResponse:
             y=y_click,
             days_back=days_back,
             search_radius=search_radius,
-            reference_date=base_image.acquisition_timestamp.date(),
+            reference_date=base_image.datetime.date(),
         )
 
     context = {

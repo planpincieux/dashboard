@@ -152,7 +152,7 @@ def update_image_paths(dry_run=True, delete_not_found=False):
             continue
 
         # Extract year from Image timestamp
-        year = image.acquisition_timestamp.year
+        year = image.datetime.year
 
         # Build new path
 

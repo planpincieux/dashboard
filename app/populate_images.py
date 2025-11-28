@@ -161,13 +161,13 @@ def get_container_path(host_path: Path) -> str:
     return str(container_path)
 
 
-def add_image(camera, acquisition_timestamp, file_path, **kwargs):
+def add_image(camera, datetime, file_path, **kwargs):
     """
     Add a new image to the database.
 
     Args:
         camera: Camera object or camera_id
-        acquisition_timestamp: Timestamp when the image was acquired
+        datetime: Timestamp when the image was acquired
         file_path: Path to the image file
         **kwargs: Additional image properties
 
@@ -179,7 +179,7 @@ def add_image(camera, acquisition_timestamp, file_path, **kwargs):
 
     image = Image.objects.create(
         camera=camera,
-        acquisition_timestamp=acquisition_timestamp,
+        datetime=datetime,
         file_path=file_path,
         **kwargs,
     )
@@ -340,7 +340,7 @@ def process_image_entry(
     # Build acquisition timestamp
     if exif_timestamp:
         try:
-            acquisition_timestamp = timezone.make_aware(
+            datetime = timezone.make_aware(
                 exif_timestamp, timezone.get_current_timezone()
             )
         except Exception as err:
@@ -354,12 +354,8 @@ def process_image_entry(
     else:
         filename_stem = image_file.stem
         try:
-            acquisition_timestamp = datetime.strptime(
-                filename_stem, "PPCX_%Y_%m_%d_%H_%M_%S"
-            )
-            acquisition_timestamp = timezone.make_aware(
-                acquisition_timestamp, timezone.get_current_timezone()
-            )
+            datetime = datetime.strptime(filename_stem, "PPCX_%Y_%m_%d_%H_%M_%S")
+            datetime = timezone.make_aware(datetime, timezone.get_current_timezone())
         except ValueError:
             return (
                 "failed",
@@ -373,7 +369,7 @@ def process_image_entry(
         "add",
         {
             "camera_obj": camera_obj,
-            "acquisition_timestamp": acquisition_timestamp,
+            "datetime": datetime,
             "container_path": container_path,
             "exif_width": exif_width,
             "exif_height": exif_height,
@@ -454,7 +450,7 @@ def process_year_images(
             images_to_create.append(
                 Image(
                     camera=info["camera_obj"],
-                    acquisition_timestamp=info["acquisition_timestamp"],
+                    datetime=info["datetime"],
                     file_path=str(info["container_path"]),
                     width_px=info["exif_width"],
                     height_px=info["exif_height"],
@@ -505,17 +501,17 @@ def process_year_images(
                 # Prepare image for this new camera
                 exif_timestamp = info["exif_timestamp"]
                 if exif_timestamp:
-                    acquisition_timestamp = timezone.make_aware(
+                    datetime = timezone.make_aware(
                         exif_timestamp, timezone.get_current_timezone()
                     )
                 else:
                     filename_stem = info["image_file"].stem
                     try:
-                        acquisition_timestamp = datetime.strptime(
+                        datetime = datetime.strptime(
                             filename_stem, "PPCX_%Y_%m_%d_%H_%M_%S"
                         )
-                        acquisition_timestamp = timezone.make_aware(
-                            acquisition_timestamp, timezone.get_current_timezone()
+                        datetime = timezone.make_aware(
+                            datetime, timezone.get_current_timezone()
                         )
                     except ValueError:
                         logger.error(
@@ -527,7 +523,7 @@ def process_year_images(
                 images_after_camera_creation.append(
                     Image(
                         camera=camera_obj,
-                        acquisition_timestamp=acquisition_timestamp,
+                        datetime=datetime,
                         file_path=str(info["container_path"]),
                         width_px=info["exif_width"],
                         height_px=info["exif_height"],

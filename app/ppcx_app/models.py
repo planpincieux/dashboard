@@ -202,8 +202,8 @@ class Image(models.Model):
 
     @property
     def date(self):
-        """Extract date from acquisition_timestamp."""
-        return self.acquisition_timestamp.date()
+        """Extract date from datetime."""
+        return self.datetime.date()
 
     def save(self, *args, **kwargs):
         """Extract rotation from EXIF data if available."""
@@ -225,17 +225,19 @@ class Image(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["camera", "acquisition_timestamp"],
+                fields=["camera", "datetime"],
                 name="unique_camera_timestamp",
             )
         ]
         indexes = [
             models.Index(fields=["camera"]),
-            models.Index(fields=["acquisition_timestamp"]),
+            models.Index(fields=["datetime"]),
         ]
 
     def __str__(self):
-        return f"{self.camera.camera_name} at {self.acquisition_timestamp.strftime('%Y-%m-%d %H:%M')}"
+        return (
+            f"{self.camera.camera_name} at {self.datetime.strftime('%Y-%m-%d %H:%M')}"
+        )
 
 
 # ================ DIC Models =============
