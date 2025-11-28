@@ -18,12 +18,13 @@ from django.views.decorators.http import require_http_methods
 from PIL import Image as PILImage
 from scipy.spatial import KDTree
 
-from .functions.visualization import (
+from ppcx_app.functions.fetch_data import load_and_filter_dic
+from ppcx_app.functions.visualization import (
     draw_quiver_on_image_cv2,
     plot_dic_scatter,
     plot_dic_vectors,
 )
-from .models import DIC, Collapse, Image
+from ppcx_app.models import DIC, Collapse, Image
 
 matplotlib.use("Agg")  # Use non-interactive backend
 
@@ -62,6 +63,7 @@ def home(request) -> HttpResponse:
     return HttpResponse("Welcome to the Planpincieux API. Use /API/ for endpoints.")
 
 
+# ===================== IMAGES =======================
 @require_http_methods(["GET"])
 def serve_image(request, image_id: int) -> HttpResponse:
     """Serve image files by Image.id (inline)."""
@@ -82,6 +84,7 @@ def serve_image(request, image_id: int) -> HttpResponse:
         raise Http404("Could not read image file")
 
 
+# ===================== DIC =======================
 @require_http_methods(["GET"])
 def serve_dic_h5(request, dic_id: int) -> HttpResponse:
     """
@@ -155,74 +158,6 @@ def serve_dic_h5_as_csv(request, dic_id: int) -> HttpResponse:
         return response
     except Exception as e:
         raise Http404(f"Could not read DIC HDF5 file: {e}") from e
-
-
-def load_and_filter_dic(
-    dic: DIC,
-    *,
-    filter_outliers: bool = True,
-    tails_percentile: float = 0.01,
-    min_velocity: float | None = None,
-    subsample: int = 1,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Read DIC HDF5 for `dic` and apply filtering + subsampling.
-
-    Returns: x, y, u, v, mag (all numpy arrays float).
-    Raises Http404 on errors or missing required datasets.
-    """
-    h5 = dic.result_file_path
-    if not h5 or not os.path.exists(h5):
-        raise Http404("DIC HDF5 file not found")
-
-    try:
-        with h5py.File(h5, "r") as f:
-            points = f["points"][()] if "points" in f else None
-            vectors = f["vectors"][()] if "vectors" in f else None
-            magnitudes = f["magnitudes"][()] if "magnitudes" in f else None
-    except Exception as e:
-        raise Http404(f"Could not read DIC HDF5 file: {e}") from e
-
-    if points is None or magnitudes is None:
-        raise Http404("DIC HDF5 missing required datasets ('points' or 'magnitudes')")
-
-    x = points[:, 0].astype(float)
-    y = points[:, 1].astype(float)
-    if vectors is not None:
-        u = vectors[:, 0].astype(float)
-        v = vectors[:, 1].astype(float)
-    else:
-        u = np.zeros_like(x)
-        v = np.zeros_like(x)
-    mag = magnitudes.astype(float)
-
-    # Build mask and apply filters
-    mask = np.ones_like(mag, dtype=bool)
-    if filter_outliers and 0.0 < tails_percentile < 0.5:
-        lo, hi = np.percentile(
-            mag, [100.0 * tails_percentile, 100.0 * (1.0 - tails_percentile)]
-        )
-        mask &= (mag >= lo) & (mag <= hi)
-    if min_velocity is not None and min_velocity > 0:
-        mask &= mag >= min_velocity
-
-    x = x[mask]
-    y = y[mask]
-    u = u[mask]
-    v = v[mask]
-    mag = mag[mask]
-
-    if subsample is None or subsample < 1:
-        subsample = 1
-    if subsample > 1:
-        idx = np.arange(0, len(x), subsample)
-        x = x[idx]
-        y = y[idx]
-        u = u[idx]
-        v = v[idx]
-        mag = mag[idx]
-
-    return x, y, u, v, mag
 
 
 @require_http_methods(["GET"])
@@ -815,6 +750,7 @@ def set_dic_label(request, dic_id: int):
     return JsonResponse({"status": "ok", "id": dic.id, "label": dic.label})
 
 
+# ===================== COLLAPSES =======================
 @require_http_methods(["GET"])
 def visualize_collapse(request, collapse_id: int) -> HttpResponse:
     """
@@ -982,6 +918,7 @@ def collapses_geojson(request) -> HttpResponse:
     return response
 
 
+# ===================== VELOCITY TIMESERIES VIEWER =======================
 @require_http_methods(["GET"])
 def velocity_timeseries_viewer(request) -> HttpResponse:
     """
@@ -1015,8 +952,6 @@ def velocity_timeseries_viewer(request) -> HttpResponse:
         return HttpResponse("Image file not found", status=404)
 
     try:
-        from PIL import Image as PILImage
-
         pil_img = PILImage.open(base_image.file_path)
         if base_image.rotation and base_image.rotation != 0:
             pil_img = pil_img.rotate(-base_image.rotation, expand=True)
