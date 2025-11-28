@@ -3,6 +3,7 @@ import json
 import mimetypes
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
@@ -10,11 +11,13 @@ import h5py
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+from django.db import transaction
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
+from PIL import Image
 from PIL import Image as PILImage
 from scipy.spatial import KDTree
 
@@ -748,6 +751,103 @@ def set_dic_label(request, dic_id: int):
     dic.label = label
     dic.save(update_fields=["label"])
     return JsonResponse({"status": "ok", "id": dic.id, "label": dic.label})
+
+
+@require_http_methods(["POST"])
+@csrf_protect
+def upload_dic_h5(request) -> JsonResponse:
+    """
+    Upload DIC HDF5 file and create database entry.
+
+    POST parameters:
+      - h5_file: HDF5 file (multipart/form-data)
+      - master_image_id: ID of master image
+      - slave_image_id: ID of slave image
+      - reference_date: YYYY-MM-DD format
+      - software_used: software name (optional)
+      - with_inversion: true/false (optional)
+
+    Returns:
+      {
+        "status": "success",
+        "dic_id": <id>,
+        "result_file_path": "<path>"
+      }
+    """
+    try:
+        # Get uploaded file
+        h5_file = request.FILES.get("h5_file")
+        if not h5_file:
+            return JsonResponse({"error": "No h5_file provided"}, status=400)
+
+        # Validate file extension
+        if not h5_file.name.endswith(".h5"):
+            return JsonResponse({"error": "File must be .h5 format"}, status=400)
+
+        # Parse parameters
+        master_image_id = request.POST.get("master_image_id")
+        slave_image_id = request.POST.get("slave_image_id")
+        reference_date_str = request.POST.get("reference_date")
+        software_used = request.POST.get("software_used", "pylamma")
+        with_inversion = request.POST.get("with_inversion", "false").lower() == "true"
+
+        if not all([master_image_id, slave_image_id, reference_date_str]):
+            return JsonResponse(
+                {
+                    "error": "master_image_id, slave_image_id, and reference_date are required"
+                },
+                status=400,
+            )
+
+        # Get images from database
+        master_image = get_object_or_404(Image, id=int(master_image_id))
+        slave_image = get_object_or_404(Image, id=int(slave_image_id))
+
+        # Parse reference date
+        reference_date = datetime.strptime(reference_date_str, "%Y-%m-%d").date()
+
+        with transaction.atomic():
+            # Create DIC entry first (to get ID)
+            dic = DIC.objects.create(
+                reference_date=reference_date,
+                master_image=master_image,
+                slave_image=slave_image,
+                master_timestamp=master_image.datetime,
+                slave_timestamp=slave_image.datetime,
+                result_file_path="",  # Will be set after saving file
+                software_used=software_used,
+                with_inversion=with_inversion,
+            )
+
+            # Construct file path inside container
+            h5_filename = f"{dic.pk:08d}_{reference_date.strftime('%Y%m%d')}_{master_image.datetime.strftime('%Y%m%d')}_{slave_image.datetime.strftime('%Y%m%d')}.h5"
+
+            # Save file to container path (defined in settings or model)
+            h5_dir = Path("/ppcx/data")  # This is inside the container
+            h5_dir.mkdir(parents=True, exist_ok=True)
+            h5_path = h5_dir / h5_filename
+
+            # Write file
+            with open(h5_path, "wb") as f:
+                for chunk in h5_file.chunks():
+                    f.write(chunk)
+
+            # Update DIC with file path
+            dic.result_file_path = str(h5_path)
+            dic.save(update_fields=["result_file_path"])
+
+        return JsonResponse(
+            {
+                "status": "success",
+                "dic_id": dic.pk,
+                "result_file_path": str(h5_path),
+                "master_timestamp": master_image.datetime.isoformat(),
+                "slave_timestamp": slave_image.datetime.isoformat(),
+            }
+        )
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
 
 # ===================== COLLAPSES =======================
