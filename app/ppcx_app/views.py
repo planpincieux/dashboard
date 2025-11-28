@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import mimetypes
 import os
 from datetime import datetime
@@ -15,13 +16,12 @@ from django.db import transaction
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
-from django.views.decorators.csrf import csrf_protect
+from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_http_methods
 from PIL import Image
 from PIL import Image as PILImage
-from scipy.spatial import KDTree
 
-from ppcx_app.functions.fetch_data import load_and_filter_dic
+from ppcx_app.functions.h5dic import create_dic_h5, load_and_filter_dic
 from ppcx_app.functions.visualization import (
     draw_quiver_on_image_cv2,
     plot_dic_scatter,
@@ -30,6 +30,10 @@ from ppcx_app.functions.visualization import (
 from ppcx_app.models import DIC, Collapse, Image
 
 matplotlib.use("Agg")  # Use non-interactive backend
+
+logger = logging.getLogger(__name__)
+
+H5_FILES_DIR = Path("/ppcx/data/dic_h5")
 
 # optional presence of cv2 for encoding / fallbacks
 try:
@@ -88,6 +92,155 @@ def serve_image(request, image_id: int) -> HttpResponse:
 
 
 # ===================== DIC =======================
+@require_http_methods(["POST"])
+@csrf_exempt
+def upload_dic_h5(request, h5_dir: str | None = None) -> JsonResponse:
+    """
+    Upload DIC data and create database entry with H5 file.
+
+    POST JSON body (required):
+      - master_date: YYYY-MM-DD (master image date) OR master_image_id: int
+      - slave_date: YYYY-MM-DD (slave image date) OR slave_image_id: int
+      - dic_data: dict with keys: points, magnitudes (required); vectors, max_magnitude (optional)
+
+    Optional fields (match DIC model):
+      - reference_date: YYYY-MM-DD (defaults to slave_date)
+      - software_used: str (default: "pylamma")
+      - software_version: str
+      - with_inversion: bool (default: false)
+      - use_ensemble_correlation: bool (default: false)
+      - ensemble_size: int
+      - ensemble_image_pairs: list of {"master": id, "slave": id}
+      - processing_parameters: dict (stored as JSON)
+      - label: str
+      - notes: str
+      - dt_hours: int (auto-calculated if not provided)
+    """
+    try:
+        h5_directory = Path(h5_dir) if h5_dir else H5_FILES_DIR
+        data = json.loads(request.body)
+        dic_data = data.get("dic_data")
+        if not dic_data:
+            return JsonResponse(
+                {"error": "Missing required field: dic_data"}, status=400
+            )
+
+        # Helper function to get image by date or ID
+        def get_image(
+            id_key: str, date_key: str, take_first: bool = True
+        ) -> Image | None:
+            if id_key in data:
+                return Image.objects.filter(id=data[id_key]).first()
+            if date_key in data:
+                try:
+                    date = datetime.strptime(data[date_key], "%Y-%m-%d").date()
+                    images = Image.objects.filter(
+                        acquisition_timestamp__date=date
+                    ).all()
+                    if take_first:
+                        return images.first()
+                    else:
+                        mid_id = len(images) // 2
+                        return images[mid_id]
+                except ValueError:
+                    return None
+            return None
+
+        # Get master and slave images
+        master_image = get_image("master_date", "master_image_id")
+        slave_image = get_image("slave_date", "slave_image_id")
+        if not master_image or not slave_image:
+            return JsonResponse(
+                {"error": "Master or slave image not found"}, status=404
+            )
+
+        # Use transaction to ensure atomicity
+        with transaction.atomic():
+            # Prepare DIC fields with defaults
+            dic_fields = {
+                "master_image": master_image,
+                "slave_image": slave_image,
+                "result_file_path": "",  # Temporary, updated after H5 creation
+            }
+
+            # Reference date (default to slave image date)
+            if "reference_date" in data:
+                try:
+                    dic_fields["reference_date"] = datetime.strptime(
+                        data["reference_date"], "%Y-%m-%d"
+                    ).date()
+                except ValueError:
+                    dic_fields["reference_date"] = (
+                        slave_image.acquisition_timestamp.date()
+                    )
+            else:
+                dic_fields["reference_date"] = slave_image.acquisition_timestamp.date()
+
+            # Map JSON fields to DIC model fields
+            optional_fields = {
+                "software_used": (str, "pylamma"),
+                "software_version": (str, None),
+                "with_inversion": (bool, False),
+                "use_ensemble_correlation": (bool, False),
+                "ensemble_size": (int, None),
+                "ensemble_image_pairs": (list, None),
+                "processing_parameters": (dict, None),
+                "label": (str, None),
+                "notes": (str, None),
+                "dt_hours": (int, None),
+            }
+            for field_name, (field_type, default_value) in optional_fields.items():
+                if field_name in data:
+                    value = data[field_name]
+                    if value is not None and not isinstance(value, field_type):
+                        try:
+                            value = field_type(value)
+                        except (ValueError, TypeError):
+                            logger.warning(
+                                f"Invalid type for {field_name}, using default: {default_value}"
+                            )
+                            value = default_value
+                    dic_fields[field_name] = value
+                elif default_value is not None:
+                    dic_fields[field_name] = default_value
+
+            # Create DIC entry to get ID for filename
+            dic = DIC.objects.create(**dic_fields)
+
+            # Generate H5 filename with DIC ID
+            reference_date = dic_fields["reference_date"]
+            master_stem = Path(master_image.file_path).stem
+            slave_stem = Path(slave_image.file_path).stem
+            h5_filename = (
+                f"{dic.pk:08d}_{reference_date.strftime('%Y%m%d')}_"
+                f"{master_stem}_{slave_stem}.h5"
+            )
+            h5_path = h5_directory / h5_filename
+
+            # Create the H5 file
+            if not create_dic_h5(dic_data, h5_path):
+                raise Exception("Failed to create H5 file")
+
+            # Update DIC entry with h5 path
+            dic.result_file_path = str(h5_path)
+            dic.save(update_fields=["result_file_path"])
+
+        return JsonResponse(
+            {
+                "success": True,
+                "dic_id": dic.id,
+                "h5_path": str(h5_path),
+                "reference_date": dic.reference_date.isoformat(),
+            }
+        )
+
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        logger.error(f"Error uploading DIC: {e}", exc_info=True)
+        return JsonResponse({"error": str(e)}, status=500)
+
+
 @require_http_methods(["GET"])
 def serve_dic_h5(request, dic_id: int) -> HttpResponse:
     """
@@ -753,103 +906,6 @@ def set_dic_label(request, dic_id: int):
     return JsonResponse({"status": "ok", "id": dic.id, "label": dic.label})
 
 
-@require_http_methods(["POST"])
-@csrf_protect
-def upload_dic_h5(request) -> JsonResponse:
-    """
-    Upload DIC HDF5 file and create database entry.
-
-    POST parameters:
-      - h5_file: HDF5 file (multipart/form-data)
-      - master_image_id: ID of master image
-      - slave_image_id: ID of slave image
-      - reference_date: YYYY-MM-DD format
-      - software_used: software name (optional)
-      - with_inversion: true/false (optional)
-
-    Returns:
-      {
-        "status": "success",
-        "dic_id": <id>,
-        "result_file_path": "<path>"
-      }
-    """
-    try:
-        # Get uploaded file
-        h5_file = request.FILES.get("h5_file")
-        if not h5_file:
-            return JsonResponse({"error": "No h5_file provided"}, status=400)
-
-        # Validate file extension
-        if not h5_file.name.endswith(".h5"):
-            return JsonResponse({"error": "File must be .h5 format"}, status=400)
-
-        # Parse parameters
-        master_image_id = request.POST.get("master_image_id")
-        slave_image_id = request.POST.get("slave_image_id")
-        reference_date_str = request.POST.get("reference_date")
-        software_used = request.POST.get("software_used", "pylamma")
-        with_inversion = request.POST.get("with_inversion", "false").lower() == "true"
-
-        if not all([master_image_id, slave_image_id, reference_date_str]):
-            return JsonResponse(
-                {
-                    "error": "master_image_id, slave_image_id, and reference_date are required"
-                },
-                status=400,
-            )
-
-        # Get images from database
-        master_image = get_object_or_404(Image, id=int(master_image_id))
-        slave_image = get_object_or_404(Image, id=int(slave_image_id))
-
-        # Parse reference date
-        reference_date = datetime.strptime(reference_date_str, "%Y-%m-%d").date()
-
-        with transaction.atomic():
-            # Create DIC entry first (to get ID)
-            dic = DIC.objects.create(
-                reference_date=reference_date,
-                master_image=master_image,
-                slave_image=slave_image,
-                master_timestamp=master_image.datetime,
-                slave_timestamp=slave_image.datetime,
-                result_file_path="",  # Will be set after saving file
-                software_used=software_used,
-                with_inversion=with_inversion,
-            )
-
-            # Construct file path inside container
-            h5_filename = f"{dic.pk:08d}_{reference_date.strftime('%Y%m%d')}_{master_image.datetime.strftime('%Y%m%d')}_{slave_image.datetime.strftime('%Y%m%d')}.h5"
-
-            # Save file to container path (defined in settings or model)
-            h5_dir = Path("/ppcx/data")  # This is inside the container
-            h5_dir.mkdir(parents=True, exist_ok=True)
-            h5_path = h5_dir / h5_filename
-
-            # Write file
-            with open(h5_path, "wb") as f:
-                for chunk in h5_file.chunks():
-                    f.write(chunk)
-
-            # Update DIC with file path
-            dic.result_file_path = str(h5_path)
-            dic.save(update_fields=["result_file_path"])
-
-        return JsonResponse(
-            {
-                "status": "success",
-                "dic_id": dic.pk,
-                "result_file_path": str(h5_path),
-                "master_timestamp": master_image.datetime.isoformat(),
-                "slave_timestamp": slave_image.datetime.isoformat(),
-            }
-        )
-
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-
-
 # ===================== COLLAPSES =======================
 @require_http_methods(["GET"])
 def visualize_collapse(request, collapse_id: int) -> HttpResponse:
@@ -1019,206 +1075,206 @@ def collapses_geojson(request) -> HttpResponse:
 
 
 # ===================== VELOCITY TIMESERIES VIEWER =======================
-@require_http_methods(["GET"])
-def velocity_timeseries_viewer(request) -> HttpResponse:
-    """
-    Interactive viewer to click on image and see velocity time series at that point.
+# @require_http_methods(["GET"])
+# def velocity_timeseries_viewer(request) -> HttpResponse:
+#     """
+#     Interactive viewer to click on image and see velocity time series at that point.
 
-    Query params:
-      - image_id: base image to display
-      - x, y: clicked coordinates (optional, for initial plot)
-      - camera_id: filter DIC by camera
-      - days_back: how many days to look back (default 30)
-      - search_radius: max distance in pixels to find nearest DIC node (default 10)
-    """
-    image_id = request.GET.get("image_id")
-    x_click = _parse_float(request.GET.get("x"), None)
-    y_click = _parse_float(request.GET.get("y"), None)
-    camera_id = request.GET.get("camera_id")
-    days_back = _parse_int(request.GET.get("days_back"), 30) or 30
-    search_radius = _parse_float(request.GET.get("search_radius"), 10.0) or 10.0
+#     Query params:
+#       - image_id: base image to display
+#       - x, y: clicked coordinates (optional, for initial plot)
+#       - camera_id: filter DIC by camera
+#       - days_back: how many days to look back (default 30)
+#       - search_radius: max distance in pixels to find nearest DIC node (default 10)
+#     """
+#     image_id = request.GET.get("image_id")
+#     x_click = _parse_float(request.GET.get("x"), None)
+#     y_click = _parse_float(request.GET.get("y"), None)
+#     camera_id = request.GET.get("camera_id")
+#     days_back = _parse_int(request.GET.get("days_back"), 30) or 30
+#     search_radius = _parse_float(request.GET.get("search_radius"), 10.0) or 10.0
 
-    # Get base image
-    if image_id:
-        base_image = get_object_or_404(Image, id=int(image_id))
-    else:
-        # Default to most recent image
-        base_image = Image.objects.order_by("-datetime").first()
-        if not base_image:
-            return HttpResponse("No images available", status=404)
+#     # Get base image
+#     if image_id:
+#         base_image = get_object_or_404(Image, id=int(image_id))
+#     else:
+#         # Default to most recent image
+#         base_image = Image.objects.order_by("-datetime").first()
+#         if not base_image:
+#             return HttpResponse("No images available", status=404)
 
-    # Load background image
-    if not os.path.exists(base_image.file_path):
-        return HttpResponse("Image file not found", status=404)
+#     # Load background image
+#     if not os.path.exists(base_image.file_path):
+#         return HttpResponse("Image file not found", status=404)
 
-    try:
-        pil_img = PILImage.open(base_image.file_path)
-        if base_image.rotation and base_image.rotation != 0:
-            pil_img = pil_img.rotate(-base_image.rotation, expand=True)
-        img_array = np.array(pil_img)
-    except Exception as e:
-        return HttpResponse(f"Could not load image: {e}", status=500)
+#     try:
+#         pil_img = PILImage.open(base_image.file_path)
+#         if base_image.rotation and base_image.rotation != 0:
+#             pil_img = pil_img.rotate(-base_image.rotation, expand=True)
+#         img_array = np.array(pil_img)
+#     except Exception as e:
+#         return HttpResponse(f"Could not load image: {e}", status=500)
 
-    # Time series data (if coordinates provided)
-    ts_data = None
-    if x_click is not None and y_click is not None:
-        ts_data = _extract_velocity_timeseries(
-            camera_id=base_image.camera_id if not camera_id else int(camera_id),
-            x=x_click,
-            y=y_click,
-            days_back=days_back,
-            search_radius=search_radius,
-            reference_date=base_image.datetime.date(),
-        )
+#     # Time series data (if coordinates provided)
+#     ts_data = None
+#     if x_click is not None and y_click is not None:
+#         ts_data = _extract_velocity_timeseries(
+#             camera_id=base_image.camera_id if not camera_id else int(camera_id),
+#             x=x_click,
+#             y=y_click,
+#             days_back=days_back,
+#             search_radius=search_radius,
+#             reference_date=base_image.datetime.date(),
+#         )
 
-    context = {
-        "base_image": base_image,
-        "image_width": img_array.shape[1],
-        "image_height": img_array.shape[0],
-        "x_click": x_click,
-        "y_click": y_click,
-        "ts_data": ts_data,
-        "days_back": days_back,
-        "search_radius": search_radius,
-    }
+#     context = {
+#         "base_image": base_image,
+#         "image_width": img_array.shape[1],
+#         "image_height": img_array.shape[0],
+#         "x_click": x_click,
+#         "y_click": y_click,
+#         "ts_data": ts_data,
+#         "days_back": days_back,
+#         "search_radius": search_radius,
+#     }
 
-    return render(request, "ppcx_app/velocity_timeseries.html", context)
-
-
-@require_http_methods(["POST"])
-@csrf_protect
-def get_velocity_timeseries_data(request) -> JsonResponse:
-    """
-    API endpoint to fetch velocity time series data for a clicked point.
-
-    POST JSON body:
-      {
-        "x": float,
-        "y": float,
-        "camera_id": int,
-        "days_back": int (optional, default 30),
-        "search_radius": float (optional, default 10.0)
-      }
-
-    Returns JSON with plotly-compatible data.
-    """
-    try:
-        body = json.loads(request.body.decode("utf-8"))
-        x = float(body["x"])
-        y = float(body["y"])
-        camera_id = int(body["camera_id"])
-        days_back = int(body.get("days_back", 30))
-        search_radius = float(body.get("search_radius", 10.0))
-        reference_date = body.get("reference_date")  # optional YYYY-MM-DD
-
-        if reference_date:
-            reference_date = datetime.fromisoformat(reference_date).date()
-        else:
-            reference_date = datetime.now().date()
-
-    except (KeyError, ValueError, json.JSONDecodeError) as e:
-        return JsonResponse({"error": f"Invalid request: {e}"}, status=400)
-
-    ts_data = _extract_velocity_timeseries(
-        camera_id=camera_id,
-        x=x,
-        y=y,
-        days_back=days_back,
-        search_radius=search_radius,
-        reference_date=reference_date,
-    )
-
-    if ts_data is None or len(ts_data["dates"]) == 0:
-        return JsonResponse({"error": "No data found near clicked point"}, status=404)
-
-    return JsonResponse(ts_data)
+#     return render(request, "ppcx_app/velocity_timeseries.html", context)
 
 
-def _extract_velocity_timeseries(
-    camera_id: int,
-    x: float,
-    y: float,
-    days_back: int,
-    search_radius: float,
-    reference_date,
-) -> dict | None:
-    """
-    Extract velocity time series for a point using KDTree search.
+# @require_http_methods(["POST"])
+# @csrf_protect
+# def get_velocity_timeseries_data(request) -> JsonResponse:
+#     """
+#     API endpoint to fetch velocity time series data for a clicked point.
 
-    Returns dict with:
-      - dates: list of datetime strings
-      - velocities: list of magnitudes
-      - u_components: list of u values
-      - v_components: list of v values
-      - distances: list of distances from clicked point to nearest node
-      - dt_hours: list of time differences
-    """
-    from datetime import timedelta
+#     POST JSON body:
+#       {
+#         "x": float,
+#         "y": float,
+#         "camera_id": int,
+#         "days_back": int (optional, default 30),
+#         "search_radius": float (optional, default 10.0)
+#       }
 
-    start_date = reference_date - timedelta(days=days_back)
+#     Returns JSON with plotly-compatible data.
+#     """
+#     try:
+#         body = json.loads(request.body.decode("utf-8"))
+#         x = float(body["x"])
+#         y = float(body["y"])
+#         camera_id = int(body["camera_id"])
+#         days_back = int(body.get("days_back", 30))
+#         search_radius = float(body.get("search_radius", 10.0))
+#         reference_date = body.get("reference_date")  # optional YYYY-MM-DD
 
-    # Query DICs for the camera and time range
-    dics = (
-        DIC.objects.filter(
-            master_image__camera_id=camera_id,
-            master_timestamp__date__gte=start_date,
-            master_timestamp__date__lte=reference_date,
-        )
-        .select_related("master_image")
-        .order_by("master_timestamp")
-    )
+#         if reference_date:
+#             reference_date = datetime.fromisoformat(reference_date).date()
+#         else:
+#             reference_date = datetime.now().date()
 
-    if not dics.exists():
-        return None
+#     except (KeyError, ValueError, json.JSONDecodeError) as e:
+#         return JsonResponse({"error": f"Invalid request: {e}"}, status=400)
 
-    results = {
-        "dates": [],
-        "velocities": [],
-        "u_components": [],
-        "v_components": [],
-        "distances": [],
-        "dt_hours": [],
-        "master_dates": [],
-        "slave_dates": [],
-    }
+#     ts_data = _extract_velocity_timeseries(
+#         camera_id=camera_id,
+#         x=x,
+#         y=y,
+#         days_back=days_back,
+#         search_radius=search_radius,
+#         reference_date=reference_date,
+#     )
 
-    for dic in dics:
-        if not dic.result_file_path or not os.path.exists(dic.result_file_path):
-            continue
+#     if ts_data is None or len(ts_data["dates"]) == 0:
+#         return JsonResponse({"error": "No data found near clicked point"}, status=404)
 
-        try:
-            with h5py.File(dic.result_file_path, "r") as f:
-                points = f["points"][()] if "points" in f else None
-                vectors = f["vectors"][()] if "vectors" in f else None
-                magnitudes = f["magnitudes"][()] if "magnitudes" in f else None
+#     return JsonResponse(ts_data)
 
-            if points is None or magnitudes is None or len(points) == 0:
-                continue
 
-            # Build KDTree and find nearest point
-            tree = KDTree(points)
-            distance, idx = tree.query([x, y], k=1)
+# def _extract_velocity_timeseries(
+#     camera_id: int,
+#     x: float,
+#     y: float,
+#     days_back: int,
+#     search_radius: float,
+#     reference_date,
+# ) -> dict | None:
+#     """
+#     Extract velocity time series for a point using KDTree search.
 
-            if distance > search_radius:
-                continue
+#     Returns dict with:
+#       - dates: list of datetime strings
+#       - velocities: list of magnitudes
+#       - u_components: list of u values
+#       - v_components: list of v values
+#       - distances: list of distances from clicked point to nearest node
+#       - dt_hours: list of time differences
+#     """
+#     from datetime import timedelta
 
-            # Extract velocity at nearest point
-            velocity = float(magnitudes[idx])
-            u = float(vectors[idx, 0]) if vectors is not None else 0.0
-            v = float(vectors[idx, 1]) if vectors is not None else 0.0
+#     start_date = reference_date - timedelta(days=days_back)
 
-            results["dates"].append(dic.master_timestamp.isoformat())
-            results["master_dates"].append(dic.master_timestamp.isoformat())
-            results["slave_dates"].append(
-                dic.slave_timestamp.isoformat() if dic.slave_timestamp else None
-            )
-            results["velocities"].append(velocity)
-            results["u_components"].append(u)
-            results["v_components"].append(v)
-            results["distances"].append(float(distance))
-            results["dt_hours"].append(dic.dt_hours if dic.dt_hours else None)
+#     # Query DICs for the camera and time range
+#     dics = (
+#         DIC.objects.filter(
+#             master_image__camera_id=camera_id,
+#             master_timestamp__date__gte=start_date,
+#             master_timestamp__date__lte=reference_date,
+#         )
+#         .select_related("master_image")
+#         .order_by("master_timestamp")
+#     )
 
-        except Exception:
-            continue
+#     if not dics.exists():
+#         return None
 
-    return results if len(results["dates"]) > 0 else None
+#     results = {
+#         "dates": [],
+#         "velocities": [],
+#         "u_components": [],
+#         "v_components": [],
+#         "distances": [],
+#         "dt_hours": [],
+#         "master_dates": [],
+#         "slave_dates": [],
+#     }
+
+#     for dic in dics:
+#         if not dic.result_file_path or not os.path.exists(dic.result_file_path):
+#             continue
+
+#         try:
+#             with h5py.File(dic.result_file_path, "r") as f:
+#                 points = f["points"][()] if "points" in f else None
+#                 vectors = f["vectors"][()] if "vectors" in f else None
+#                 magnitudes = f["magnitudes"][()] if "magnitudes" in f else None
+
+#             if points is None or magnitudes is None or len(points) == 0:
+#                 continue
+
+#             # Build KDTree and find nearest point
+#             tree = KDTree(points)
+#             distance, idx = tree.query([x, y], k=1)
+
+#             if distance > search_radius:
+#                 continue
+
+#             # Extract velocity at nearest point
+#             velocity = float(magnitudes[idx])
+#             u = float(vectors[idx, 0]) if vectors is not None else 0.0
+#             v = float(vectors[idx, 1]) if vectors is not None else 0.0
+
+#             results["dates"].append(dic.master_timestamp.isoformat())
+#             results["master_dates"].append(dic.master_timestamp.isoformat())
+#             results["slave_dates"].append(
+#                 dic.slave_timestamp.isoformat() if dic.slave_timestamp else None
+#             )
+#             results["velocities"].append(velocity)
+#             results["u_components"].append(u)
+#             results["v_components"].append(v)
+#             results["distances"].append(float(distance))
+#             results["dt_hours"].append(dic.dt_hours if dic.dt_hours else None)
+
+#         except Exception:
+#             continue
+
+#     return results if len(results["dates"]) > 0 else None
