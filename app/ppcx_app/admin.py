@@ -479,8 +479,6 @@ class DICAdmin(admin.ModelAdmin):
         DICYearFilter,
         DICMonthFilter,
         DICdtdaysFilter,
-        # "dt_days",
-        # "dt_hours",
         "label",
     ]
     search_fields = ["id", "master_timestamp", "dt_hours", "label"]
