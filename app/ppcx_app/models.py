@@ -254,10 +254,15 @@ class DIC(models.Model):
         Image, on_delete=models.CASCADE, related_name="slave_dic"
     )
     result_file_path = models.CharField(
-        max_length=1024, null=True, blank=True
-    )  # HDF5 file path
-    master_timestamp = models.DateTimeField(null=True, blank=True)
-    slave_timestamp = models.DateTimeField(null=True, blank=True)
+        max_length=1024,
+        null=True,
+        blank=True,
+        help_text="Path to the DIC results HDF5 file stored inside the server",
+    )
+    # Denormalized fields - synced automatically in save()
+    master_timestamp = models.DateTimeField(null=True, blank=True, editable=False)
+    slave_timestamp = models.DateTimeField(null=True, blank=True, editable=False)
+
     dt_hours = models.IntegerField(null=True, blank=True)
     software_used = models.CharField(max_length=100, null=True, blank=True)
     software_version = models.CharField(max_length=50, null=True, blank=True)
@@ -284,16 +289,6 @@ class DIC(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        # constraints = [
-        #     models.CheckConstraint(
-        #         condition=~models.Q(master_timestamp=models.F("slave_timestamp")),
-        #         name="different_timestamps",
-        #     ),
-        #     models.UniqueConstraint(
-        #         fields=["master_image", "slave_image", "dt_hours"],
-        #         name="unique_image_pair_paths_dt_hours",
-        #     ),
-        # ]
         indexes = [
             models.Index(fields=["reference_date"]),
             models.Index(fields=["master_timestamp"]),
@@ -301,6 +296,12 @@ class DIC(models.Model):
         ]
 
     def save(self, *args, **kwargs):
+        # Auto-sync timestamps from related images
+        if self.master_image:
+            self.master_timestamp = self.master_image.datetime
+        if self.slave_image:
+            self.slave_timestamp = self.slave_image.datetime
+
         if not self.dt_hours and self.master_timestamp and self.slave_timestamp:
             time_diff = self.slave_timestamp - self.master_timestamp
             self.dt_hours = round(time_diff.total_seconds() / 3600)
