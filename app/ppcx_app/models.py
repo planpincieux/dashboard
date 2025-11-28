@@ -42,11 +42,24 @@ class Camera(models.Model):
     focal_length_mm = models.FloatField(null=True, blank=True)
     sensor_width_mm = models.FloatField(null=True, blank=True)
     sensor_height_mm = models.FloatField(null=True, blank=True)
-    pixel_size_um = models.FloatField(null=True, blank=True)
-    easting = models.FloatField(null=True, blank=True)
-    northing = models.FloatField(null=True, blank=True)
-    elevation = models.FloatField(null=True, blank=True)
-    epsg_code = models.IntegerField(default=32632)
+    pixel_size_um = models.FloatField(
+        null=True, blank=True, help_text="Physical pixel size in micrometers"
+    )
+    gsd = models.FloatField(
+        null=True, blank=True, help_text="Average ground Sampling Distance in cm/pixel"
+    )
+    easting = models.FloatField(
+        null=True, blank=True, help_text="Easting coordinate in meters (EPSG 32632)"
+    )
+    northing = models.FloatField(
+        null=True, blank=True, help_text="Northing coordinate in meters (EPSG 32632)"
+    )
+    elevation = models.FloatField(
+        null=True, blank=True, help_text="Elevation in meters (EPSG 32632)"
+    )
+    epsg_code = models.IntegerField(
+        default=32632, help_text="EPSG code for the coordinate reference system"
+    )
     installation_date = models.DateField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
