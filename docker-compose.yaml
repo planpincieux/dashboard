@@ -45,7 +45,8 @@ services:
       - ppcx_data:/data/ppcx_data:ro # Read-only mount of GMG FTP datax
       - fms_data:/ppcx/fms_data:ro # Read-only mount of FMS data # TODO: move it to /data/fms_data for consistency
     ports:
-      - "8080:8000"
+      - "8080:8000" # For production with gunicorn
+      - "9999:9999" # For developing with runserver and debug with vscode
     networks: [ppcx_net]
     secrets:
       - db_password
