@@ -330,7 +330,6 @@ class ImageAdmin(admin.ModelAdmin):
         "acquisition_timestamp",
         ImageYearFilter,
         ImageMonthFilter,
-        ImageDayFilter,
         ImageTimeOfDayFilter,
         "label",
         HasDICFilter,
@@ -416,6 +415,44 @@ DICDayFilter = DayFilterBase.create("master_timestamp")
 DICTimeOfDayFilter = TimeOfDayFilterBase.create("master_timestamp")
 
 
+class DICdtdaysFilter(admin.SimpleListFilter):
+    title = "dt days"
+    parameter_name = "dt_days"
+
+    # value to add/subtract to true dt_hours to account for hour uncertainty
+    DT_HOURS_TOLERANCE = 2
+
+    def lookups(self, request, model_admin):
+        return (
+            ("1-2", "1-2 days"),
+            ("3-4", "3-4 days"),
+            ("5-6", "5-6 days"),
+            (">6", ">6 days"),
+        )
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        if val == "1-2":
+            return queryset.filter(
+                dt_hours__gte=24 - self.DT_HOURS_TOLERANCE,
+                dt_hours__lt=48 + self.DT_HOURS_TOLERANCE,
+            )
+        if val == "3-4":
+            return queryset.filter(
+                dt_hours__gte=72 - self.DT_HOURS_TOLERANCE,
+                dt_hours__lt=96 + self.DT_HOURS_TOLERANCE,
+            )
+        if val == "5-6":
+            return queryset.filter(
+                dt_hours__gte=120 - self.DT_HOURS_TOLERANCE,
+                dt_hours__lt=144 + self.DT_HOURS_TOLERANCE,
+            )
+        if val == ">6":
+            return queryset.filter(dt_hours__gte=144 + self.DT_HOURS_TOLERANCE)
+
+        return queryset
+
+
 @admin.register(DIC)
 class DICAdmin(admin.ModelAdmin):
     show_full_result_count = False
@@ -441,8 +478,9 @@ class DICAdmin(admin.ModelAdmin):
         "master_image__camera__camera_name",
         DICYearFilter,
         DICMonthFilter,
-        DICDayFilter,
-        "dt_hours",
+        DICdtdaysFilter,
+        # "dt_days",
+        # "dt_hours",
         "label",
     ]
     search_fields = ["id", "master_timestamp", "dt_hours", "label"]
