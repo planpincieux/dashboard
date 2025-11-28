@@ -50,17 +50,13 @@ class CameraAdmin(gis_admin.GISModelAdmin):
     @admin.display(ordering="min_image_date", description="min_date")
     def min_image_date(self, obj):
         """Display the earliest image date for this camera"""
-        min_date = obj.images.aggregate(min_date=models.Min("acquisition_timestamp"))[
-            "min_date"
-        ]
+        min_date = obj.images.aggregate(min_date=models.Min("datetime"))["min_date"]
         return min_date.strftime("%Y-%m-%d %H:%M") if min_date else "No images"
 
     @admin.display(ordering="max_image_date", description="max_date")
     def max_image_date(self, obj):
         """Display the latest image date for this camera"""
-        max_date = obj.images.aggregate(max_date=models.Max("acquisition_timestamp"))[
-            "max_date"
-        ]
+        max_date = obj.images.aggregate(max_date=models.Max("datetime"))["max_date"]
         return max_date.strftime("%Y-%m-%d %H:%M") if max_date else "No images"
 
     def get_queryset(self, request):
@@ -188,12 +184,12 @@ class TimeOfDayFilterBase(BaseDateFilter):
 
     def lookups(self, request, model_admin):
         return (
-            ("0", "00:00 - 01:00"),
-            ("1", "01:00 - 02:00"),
-            ("2", "02:00 - 03:00"),
-            ("3", "03:00 - 04:00"),
-            ("4", "04:00 - 05:00"),
-            ("5", "05:00 - 06:00"),
+            # ("0", "00:00 - 01:00"),
+            # ("1", "01:00 - 02:00"),
+            # ("2", "02:00 - 03:00"),
+            # ("3", "03:00 - 04:00"),
+            # ("4", "04:00 - 05:00"),
+            # ("5", "05:00 - 06:00"),
             ("6", "06:00 - 07:00"),
             ("7", "07:00 - 08:00"),
             ("8", "08:00 - 09:00"),
@@ -208,10 +204,10 @@ class TimeOfDayFilterBase(BaseDateFilter):
             ("17", "17:00 - 18:00"),
             ("18", "18:00 - 19:00"),
             ("19", "19:00 - 20:00"),
-            ("20", "20:00 - 21:00"),
-            ("21", "21:00 - 22:00"),
-            ("22", "22:00 - 23:00"),
-            ("23", "23:00 - 24:00"),
+            # ("20", "20:00 - 21:00"),
+            # ("21", "21:00 - 22:00"),
+            # ("22", "22:00 - 23:00"),
+            # ("23", "23:00 - 24:00"),
         )
 
     def queryset(self, request, queryset):
@@ -222,11 +218,11 @@ class TimeOfDayFilterBase(BaseDateFilter):
 
 # ========== Images ==========
 
-# Create filters for Image model (acquisition_timestamp)
-ImageYearFilter = YearFilterBase.create("acquisition_timestamp")
-ImageMonthFilter = MonthFilterBase.create("acquisition_timestamp")
-ImageDayFilter = DayFilterBase.create("acquisition_timestamp")
-ImageTimeOfDayFilter = TimeOfDayFilterBase.create("acquisition_timestamp")
+# Create filters for Image model (datetime)
+ImageYearFilter = YearFilterBase.create("datetime")
+ImageMonthFilter = MonthFilterBase.create("datetime")
+ImageDayFilter = DayFilterBase.create("datetime")
+ImageTimeOfDayFilter = TimeOfDayFilterBase.create("datetime")
 
 
 class HasDICFilter(admin.SimpleListFilter):
@@ -316,7 +312,7 @@ class ImageAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "camera",
-        "acquisition_timestamp",
+        "datetime",
         "camera__model",
         "camera__focal_length_mm",
         "file_name",
@@ -327,7 +323,7 @@ class ImageAdmin(admin.ModelAdmin):
     list_filter = [
         "camera",
         "camera__focal_length_mm",
-        "acquisition_timestamp",
+        "datetime",
         ImageYearFilter,
         ImageMonthFilter,
         ImageTimeOfDayFilter,
@@ -335,7 +331,7 @@ class ImageAdmin(admin.ModelAdmin):
         HasDICFilter,
     ]
     search_fields = ["id", "camera__camera_name", "file_path", "label"]
-    date_hierarchy = "acquisition_timestamp"
+    date_hierarchy = "datetime"
     # Always show the id in the change form and keep formatted_exif_data readonly
     readonly_fields = ("id", "formatted_exif_data", "dic_results")
     form = ImageAdminForm
@@ -365,9 +361,7 @@ class ImageAdmin(admin.ModelAdmin):
             url = reverse("serve_image", args=[obj.id])
             # Format the date for display in title
             date_str = (
-                obj.acquisition_timestamp.strftime("%Y-%m-%d %H:%M")
-                if obj.acquisition_timestamp
-                else "No date"
+                obj.datetime.strftime("%Y-%m-%d %H:%M") if obj.datetime else "No date"
             )
             title = f"Image {obj.id} - {date_str}"
             return format_html(
@@ -464,8 +458,11 @@ class DICAdmin(admin.ModelAdmin):
         "slave_timestamp",
         "master_image",
         "slave_image",
-        "dt_hours",
         "dt_days",
+        "dt_hours",
+        "ensamble",
+        "ensemble_pairs_count",
+        "with_inversion",
         "label",
         "visualize_dic",
         "get_data",
@@ -527,6 +524,10 @@ class DICAdmin(admin.ModelAdmin):
         return "No data available"
 
     # In admin.py DIC admin class
+    @admin.display(description="Ensemble", boolean=True)
+    def ensamble(self, obj):
+        return obj.use_ensemble_correlation
+
     @admin.display(description="Ensemble pairs")
     def ensemble_pairs_count(self, obj):
         if obj.use_ensemble_correlation and obj.ensemble_image_pairs:
@@ -535,9 +536,9 @@ class DICAdmin(admin.ModelAdmin):
 
 
 # === Collapses ===
-# Create filters for Image model (acquisition_timestamp)
-CollapseYearFilter = YearFilterBase.create("image__acquisition_timestamp")
-CollapseMonthFilter = MonthFilterBase.create("image__acquisition_timestamp")
+# Create filters for Image model (datetime)
+CollapseYearFilter = YearFilterBase.create("image__datetime")
+CollapseMonthFilter = MonthFilterBase.create("image__datetime")
 
 
 class HasValidVolumeFilter(admin.SimpleListFilter):
@@ -581,7 +582,7 @@ class CollapseAdmin(admin.ModelAdmin):
         "visualize_link",
     )
     list_filter = (
-        "image__acquisition_timestamp",
+        "image__datetime",
         "image__camera",
         HasValidVolumeFilter,
         CollapseYearFilter,
@@ -593,7 +594,7 @@ class CollapseAdmin(admin.ModelAdmin):
         "image__file_path",
         "image__camera__camera_name",
     )
-    date_hierarchy = "image__acquisition_timestamp"
+    date_hierarchy = "image__datetime"
 
     # Prevent the admin from loading all Image rows into a dropdown
     raw_id_fields = ("image",)
@@ -610,7 +611,7 @@ class CollapseAdmin(admin.ModelAdmin):
     # Exclude geom_qgis from the form since it's auto-generated
     exclude = ("geom_qgis",)
     list_select_related = ("image", "image__camera")
-    ordering = ("image__acquisition_timestamp",)
+    ordering = ("image__datetime",)
     # list_per_page = 50
 
     def get_queryset(self, request):
@@ -618,11 +619,11 @@ class CollapseAdmin(admin.ModelAdmin):
         # ensure we bring back related image + camera to avoid extra queries
         return qs.select_related("image", "image__camera")
 
-    @admin.display(ordering="image__acquisition_timestamp", description="date")
+    @admin.display(ordering="image__datetime", description="date")
     def date(self, obj):
         """Display just the acquisition timestamp with custom label"""
         if obj and obj.image:
-            return obj.image.acquisition_timestamp
+            return obj.image.datetime
         return "-"
 
     @admin.display(description="Image")

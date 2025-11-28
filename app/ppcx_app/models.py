@@ -178,7 +178,13 @@ class Image(models.Model):
     """Metadata for each image acquired by the cameras."""
 
     camera = models.ForeignKey(Camera, on_delete=models.CASCADE, related_name="images")
-    acquisition_timestamp = models.DateTimeField()
+    datetime = models.DateTimeField(db_column="datetime")  # Primary column
+    acquisition_timestamp = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        db_comment="Deprecated: use datetime instead",
+    )
     file_path = models.CharField(max_length=1024, unique=True)
     width_px = models.IntegerField(null=True, blank=True)
     height_px = models.IntegerField(null=True, blank=True)
@@ -198,11 +204,6 @@ class Image(models.Model):
     def date(self):
         """Extract date from acquisition_timestamp."""
         return self.acquisition_timestamp.date()
-
-    @property
-    def datetime(self):
-        """Alias for acquisition_timestamp."""
-        return self.acquisition_timestamp
 
     def save(self, *args, **kwargs):
         """Extract rotation from EXIF data if available."""
@@ -265,6 +266,10 @@ class DIC(models.Model):
     ensemble_size = models.IntegerField(
         null=True, blank=True, help_text="Number of image pairs in the ensemble"
     )
+    with_inversion = models.BooleanField(
+        default=False,
+        help_text="Whether time-series inversion was applied to refine DIC results",
+    )
     # list of master/slave image id pairs used when ensemble correlation is active.
     # Format: [{"master": <image_id>, "slave": <image_id>}, ...]
     ensemble_image_pairs = models.JSONField(
@@ -277,16 +282,16 @@ class DIC(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        constraints = [
-            models.CheckConstraint(
-                condition=~models.Q(master_timestamp=models.F("slave_timestamp")),
-                name="different_timestamps",
-            ),
-            models.UniqueConstraint(
-                fields=["master_image", "slave_image", "dt_hours"],
-                name="unique_image_pair_paths_dt_hours",
-            ),
-        ]
+        # constraints = [
+        #     models.CheckConstraint(
+        #         condition=~models.Q(master_timestamp=models.F("slave_timestamp")),
+        #         name="different_timestamps",
+        #     ),
+        #     models.UniqueConstraint(
+        #         fields=["master_image", "slave_image", "dt_hours"],
+        #         name="unique_image_pair_paths_dt_hours",
+        #     ),
+        # ]
         indexes = [
             models.Index(fields=["reference_date"]),
             models.Index(fields=["master_timestamp"]),
