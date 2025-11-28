@@ -147,8 +147,8 @@ def upload_dic_h5(request, h5_dir: str | None = None) -> JsonResponse:
             return None
 
         # Get master and slave images
-        master_image = get_image("master_date", "master_image_id")
-        slave_image = get_image("slave_date", "slave_image_id")
+        master_image = get_image("master_image_id", "master_date")
+        slave_image = get_image("slave_image_id", "slave_date")
         if not master_image or not slave_image:
             return JsonResponse(
                 {"error": "Master or slave image not found"}, status=404
