@@ -68,12 +68,14 @@ class Camera(models.Model):
     location = gis_models.PointField(dim=3, srid=32632, null=True, blank=True)
 
     def save(self, *args, **kwargs):
+        # Always include elevation (use 0 if not provided) for 3D point
+        elevation = self.elevation if self.elevation is not None else 0
         # If easting and northing are provided, create a Point object
         if self.easting and self.northing:
             self.location = Point(
                 self.easting,
                 self.northing,
-                self.elevation if self.elevation else 0,
+                elevation,
                 srid=self.epsg_code,
             )
 
