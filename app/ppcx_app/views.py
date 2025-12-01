@@ -1,7 +1,6 @@
 import io
 import json
 import logging
-import mimetypes
 import os
 from datetime import datetime
 from pathlib import Path
@@ -71,22 +70,57 @@ def home(request) -> HttpResponse:
 # ===================== IMAGES =======================
 @require_http_methods(["GET"])
 def serve_image(request, image_id: int) -> HttpResponse:
-    """Serve image files by Image.id (inline)."""
+    """
+    Serve image files by Image.id (inline), with automatic rotation applied if needed.
+
+    Query parameters:
+      - no_rotate: if present, skip rotation (serve original)
+    """
     image = get_object_or_404(Image, id=image_id)
     if not os.path.exists(image.file_path):
         raise Http404("Image file not found")
+
+    # Check if rotation should be skipped
+    no_rotate = request.GET.get("no_rotate") is not None
+
     try:
-        with open(image.file_path, "rb") as f:
-            content = f.read()
-        content_type, _ = mimetypes.guess_type(image.file_path)
-        content_type = content_type or "application/octet-stream"
+        # Open image with PIL
+        pil_image = PILImage.open(image.file_path)
+
+        # Apply rotation if needed and not explicitly disabled
+        if not no_rotate and image.rotation and image.rotation != 0:
+            pil_image = pil_image.rotate(-image.rotation, expand=True)
+
+        # Convert to bytes
+        buffer = io.BytesIO()
+
+        # Preserve original format if possible
+        img_format = pil_image.format or "JPEG"
+        if img_format.upper() in ("JPEG", "JPG"):
+            pil_image.save(buffer, format="JPEG", quality=95, optimize=True)
+            content_type = "image/jpeg"
+        elif img_format.upper() == "PNG":
+            pil_image.save(buffer, format="PNG", optimize=True)
+            content_type = "image/png"
+        else:
+            # Default to JPEG for other formats
+            if pil_image.mode in ("RGBA", "LA", "P"):
+                pil_image = pil_image.convert("RGB")
+            pil_image.save(buffer, format="JPEG", quality=95, optimize=True)
+            content_type = "image/jpeg"
+
+        buffer.seek(0)
+        content = buffer.getvalue()
+
         response = HttpResponse(content, content_type=content_type)
         response["Content-Disposition"] = (
             f'inline; filename="{os.path.basename(image.file_path)}"'
         )
         return response
-    except OSError:
-        raise Http404("Could not read image file")
+
+    except Exception as e:
+        logger.error(f"Error serving image {image_id}: {e}", exc_info=True)
+        raise Http404(f"Could not read or process image file: {e}") from e
 
 
 # ===================== DIC =======================
@@ -326,8 +360,8 @@ def visualize_dic(request, dic_id: int) -> HttpResponse:
     # Plotting params
     show_background = _parse_bool(request.GET.get("background"), True)
     cmap_name = request.GET.get("cmap", "viridis")
-    vmin = _parse_float(request.GET.get("vmin"), None)
-    vmax = _parse_float(request.GET.get("vmax"), None)
+    vmin = _parse_float(request.GET.get("vmin"), 5)
+    vmax = _parse_float(request.GET.get("vmax"), 0.5)
     figsize_param = request.GET.get("figsize", "")
     if figsize_param:
         try:
@@ -358,6 +392,8 @@ def visualize_dic(request, dic_id: int) -> HttpResponse:
     filter_min_velocity = _parse_float(request.GET.get("filter_min_velocity"), None)
     subsample = _parse_int(request.GET.get("subsample"), 1) or 1
 
+    gsd = _parse_float(request.GET.get("gsd"), None)
+
     # load DIC record
     dic = get_object_or_404(DIC, id=dic_id)
 
@@ -377,14 +413,24 @@ def visualize_dic(request, dic_id: int) -> HttpResponse:
     )
 
     # Normalize displacement by the time difference and plot daily velocity if requested
-    dt_hours = dic.dt_hours if dic.dt_hours is not None and dic.dt_hours > 0 else 1.0
+    dt_hours = dic.dt_hours if dic.dt_hours is not None and dic.dt_hours > 0 else 24.0
     if plot_velocity:
+        if dic.with_inversion:
+            dt_hours = 24.0  # when inversion is used, results are already daily rates
         u = u / dt_hours * 24.0  # px -> px/day
         v = v / dt_hours * 24.0  # px -> px/day
         mag = mag / dt_hours * 24.0  # px -> px/day
-        clabel = "Velocity Magnitude [px/day]"
+        clabel = "Velocity Magnitude"
     else:
-        clabel = "Displacement Magnitude [px]"
+        clabel = "Displacement Magnitude"
+
+    if gsd is not None and gsd > 0.0:
+        u = u * gsd
+        v = v * gsd
+        mag = mag * gsd
+        clabel += " [m]" if not plot_velocity else " [m/day]"
+    else:
+        clabel += " [px]" if not plot_velocity else " [px/day]"
 
     # background image (may be rotated for Tele cameras) - only rotate image, not vectors
     background_image: np.ndarray | None = None

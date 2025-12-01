@@ -194,6 +194,13 @@ class Image(models.Model):
     rotation = models.IntegerField(
         default=0, help_text="Rotation in degrees (0, 90, 180, 270)"
     )
+    file_size_bytes = models.BigIntegerField(
+        null=True,
+        blank=True,
+        editable=False,
+        db_index=True,
+        help_text="File size in bytes (auto-populated on save)",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     label = models.CharField(max_length=100, null=True, blank=True)
 
@@ -206,6 +213,33 @@ class Image(models.Model):
     def date(self):
         """Extract date from datetime."""
         return self.datetime.date()
+
+    @property
+    def file_size_mb(self) -> float | None:
+        """
+        Get the file size in megabytes (MB).
+        Returns None if file doesn't exist.
+        """
+        size_bytes = self.file_size_bytes
+        if size_bytes is not None:
+            return round(size_bytes / (1024 * 1024), 2)
+        return None
+
+    @property
+    def file_size_human(self) -> str:
+        """
+        Get human-readable file size (e.g., '2.5 MB', '1.2 GB').
+        Returns 'N/A' if file doesn't exist.
+        """
+        size_bytes = self.file_size_bytes
+        if size_bytes is None:
+            return "N/A"
+
+        for unit in ["B", "KB", "MB", "GB"]:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.2f} TB"
 
     def save(self, *args, **kwargs):
         """Extract rotation from EXIF data if available."""
@@ -221,6 +255,18 @@ class Image(models.Model):
                 "Rotated 270 CW": 270,
             }
             self.rotation = orientation_map.get(orientation, 0)
+
+        # Update file size if file exists
+        if self.file_path:
+            try:
+                file_path = Path(self.file_path)
+                if file_path.exists():
+                    self.file_size_bytes = file_path.stat().st_size
+                else:
+                    self.file_size_bytes = None
+            except (OSError, PermissionError) as e:
+                logger.warning(f"Cannot access file size for {self.file_path}: {e}")
+                self.file_size_bytes = None
 
         super().save(*args, **kwargs)
 

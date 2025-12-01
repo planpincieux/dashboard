@@ -217,8 +217,34 @@ class TimeOfDayFilterBase(BaseDateFilter):
 
 
 # ========== Images ==========
+# File size colormap - single source of truth
+FILE_SIZE_CLASSES_MB = {
+    "large": (8, None),  # ≥ 8 MB
+    "medium": (5, 8),  # 5–8 MB
+    "small": (3, 5),  # 3–5 MB
+    "tiny": (0, 3),  # < 3 MB
+}
 
-# Create filters for Image model (datetime)
+FILE_SIZE_COLORMAP = {
+    "large": "#090",  # Green
+    "medium": "#f90",  # Orange
+    "small": "#d00",  # Red
+    "tiny": "#999",  # Gray
+}
+
+
+def get_file_size_color(size_mb: float | None) -> str:
+    """Get color using FILE_SIZE_CLASSES_MB and FILE_SIZE_COLORMAP."""
+    if size_mb is None:
+        return "#999"
+    # Determine class by thresholds
+    for cls, (low, high) in FILE_SIZE_CLASSES_MB.items():
+        if (size_mb >= low) and (high is None or size_mb < high):
+            return FILE_SIZE_COLORMAP[cls]
+    return "#999"
+
+
+# Filters for Image model
 ImageYearFilter = YearFilterBase.create("datetime")
 ImageMonthFilter = MonthFilterBase.create("datetime")
 ImageDayFilter = DayFilterBase.create("datetime")
@@ -245,6 +271,39 @@ class HasDICFilter(admin.SimpleListFilter):
             return qs.filter(_has_dic=True)
         if self.value() == "0":
             return qs.filter(_has_dic=False)
+        return queryset
+
+
+class FileSizeFilter(admin.SimpleListFilter):
+    """Filter images by file size ranges (optimized with DB field)."""
+
+    title = "file size"
+    parameter_name = "file_size"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("large", "≥ 8 MB (Clear)"),
+            ("medium", "5–8 MB (Cloudy)"),
+            ("small", "3–5 MB (Foggy)"),
+            ("tiny", "< 3 MB (Tiny/Corrupted)"),
+            ("missing", "File Not found"),
+        )
+
+    def queryset(self, request, queryset):
+        MB = 1024 * 1024
+        val = self.value()
+
+        if val == "missing":
+            return queryset.filter(file_size_bytes__isnull=True)
+
+        if val in FILE_SIZE_CLASSES_MB:
+            low_mb, high_mb = FILE_SIZE_CLASSES_MB[val]
+            q = queryset.filter(file_size_bytes__isnull=False)
+            q = q.filter(file_size_bytes__gte=int(low_mb * MB))
+            if high_mb is not None:
+                q = q.filter(file_size_bytes__lt=int(high_mb * MB))
+            return q
+
         return queryset
 
 
@@ -319,6 +378,7 @@ class ImageAdmin(admin.ModelAdmin):
         "label",
         "view_image",
         "dic_results",  # show quick links in changelist
+        "file_size_display",
     )
     list_filter = [
         "camera",
@@ -329,11 +389,17 @@ class ImageAdmin(admin.ModelAdmin):
         ImageTimeOfDayFilter,
         "label",
         HasDICFilter,
+        FileSizeFilter,
     ]
     search_fields = ["id", "camera__camera_name", "file_path", "label"]
     date_hierarchy = "datetime"
     # Always show the id in the change form and keep formatted_exif_data readonly
-    readonly_fields = ("id", "formatted_exif_data", "dic_results")
+    readonly_fields = (
+        "id",
+        "formatted_exif_data",
+        "dic_results",
+        "file_size_mb",
+    )
     form = ImageAdminForm
 
     def formatted_exif_data(self, obj):
@@ -371,6 +437,29 @@ class ImageAdmin(admin.ModelAdmin):
                 "View Image",
             )
         return ""
+
+    def get_queryset(self, request):
+        """Optimize queries."""
+        qs = super().get_queryset(request)
+        return qs.select_related("camera")
+
+    @admin.display(ordering="file_size_bytes", description="File Size")
+    def file_size_display(self, obj):
+        """Display file size in list view with color coding (sortable)."""
+        if not obj or not obj.pk:
+            return "N/A"
+
+        size_mb = obj.file_size_mb
+        if size_mb is None:
+            return format_html('<span style="color: #999;">Not found</span>')
+
+        color = get_file_size_color(size_mb)
+        size_text = f"{size_mb:.1f} MB"  # pre-format numeric value
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">{}</span>',
+            color,
+            size_text,
+        )
 
     def dic_results(self, obj):
         """Provide links to DICs where this image is master or slave (counts included)."""
