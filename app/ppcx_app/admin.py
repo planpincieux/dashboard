@@ -477,6 +477,7 @@ class DICAdmin(admin.ModelAdmin):
         DICMonthFilter,
         DICdtdaysFilter,
         "label",
+        "with_inversion",
     ]
     search_fields = ["id", "master_timestamp", "dt_hours", "label"]
     date_hierarchy = "reference_date"
