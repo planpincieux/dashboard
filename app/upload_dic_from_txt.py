@@ -16,8 +16,8 @@ from tqdm import tqdm
 DIC_RESULTS_DIR = Path("./temp")
 DIC_FILES_PATTERN = "day_dic_*.txt"
 
-# DJANGO_API_URL = "http://150.145.51.193:8080/API/dic/upload/"
-DJANGO_API_URL = "http://127.0.0.1:9999/API/dic/upload/"  # Local testing
+DJANGO_API_URL = "http://150.145.51.193:8080/API/dic/upload/"
+# DJANGO_API_URL = "http://127.0.0.1:9999/API/dic/upload/"  # Local testing
 SOFTWARE_USED = "pylamma"
 
 
