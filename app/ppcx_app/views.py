@@ -5,10 +5,8 @@ import mimetypes
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlencode
 
-import h5py
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -21,7 +19,7 @@ from django.views.decorators.http import require_http_methods
 from PIL import Image
 from PIL import Image as PILImage
 
-from ppcx_app.functions.h5dic import create_dic_h5, load_and_filter_dic
+from ppcx_app.functions.h5dic import create_dic_h5, filter_dic_arrays, read_dic_h5
 from ppcx_app.functions.visualization import (
     draw_quiver_on_image_cv2,
     plot_dic_scatter,
@@ -147,7 +145,7 @@ def upload_dic_h5(request, h5_dir: str | None = None) -> JsonResponse:
             return None
 
         # Get master and slave images
-        master_image = get_image("master_image_id", "master_date")
+        master_image = get_image("master_image_id", "master_date", take_first=False)
         slave_image = get_image("slave_image_id", "slave_date")
         if not master_image or not slave_image:
             return JsonResponse(
@@ -248,22 +246,13 @@ def serve_dic_h5(request, dic_id: int) -> HttpResponse:
     Query params: none required.
     """
     dic = get_object_or_404(DIC, id=dic_id)
-    h5_path = dic.result_file_path
-    if not h5_path or not os.path.exists(h5_path):
-        raise Http404("DIC HDF5 file not found")
 
     try:
-        with h5py.File(h5_path, "r") as f:
-            data: dict[str, Any] = {
-                "points": f["points"][()].tolist() if "points" in f else None,
-                "vectors": f["vectors"][()].tolist() if "vectors" in f else None,
-                "magnitudes": f["magnitudes"][()].tolist()
-                if "magnitudes" in f
-                else None,
-                "max_magnitude": float(f["max_magnitude"][()])
-                if "max_magnitude" in f
-                else None,
-            }
+        data = read_dic_h5(dic)
+        # convert numpy arrays to lists for JSON serialization
+        for key in data:
+            if isinstance(data[key], np.ndarray):
+                data[key] = data[key].tolist()
         return JsonResponse(data)
     except Exception as e:
         raise Http404(f"Could not read DIC HDF5 file: {e}") from e
@@ -273,18 +262,11 @@ def serve_dic_h5(request, dic_id: int) -> HttpResponse:
 def serve_dic_h5_as_csv(request, dic_id: int) -> HttpResponse:
     """Return DIC data as CSV (x,y,u,v,magnitude)."""
     dic = get_object_or_404(DIC, id=dic_id)
-    h5_path = dic.result_file_path
-    if not h5_path or not os.path.exists(h5_path):
-        raise Http404("DIC HDF5 file not found")
-
     try:
-        with h5py.File(h5_path, "r") as f:
-            points = f["points"][()] if "points" in f else None
-            vectors = f["vectors"][()] if "vectors" in f else None
-            magnitudes = f["magnitudes"][()] if "magnitudes" in f else None
-
-        if points is None or magnitudes is None:
-            return HttpResponse("No DIC data available", status=404)
+        data = read_dic_h5(dic)
+        points = data["points"]  # Nx2 array
+        vectors = data["vectors"]  # Nx2 array
+        magnitudes = data["magnitudes"]  # N array
 
         csv_lines = ["x,y,u,v,magnitude"]
         for i in range(len(points)):
@@ -293,21 +275,21 @@ def serve_dic_h5_as_csv(request, dic_id: int) -> HttpResponse:
             magnitude = magnitudes[i]
             csv_lines.append(f"{x},{y},{u},{v},{magnitude}")
 
-            # Build informative filename
-            master_ts = (
-                dic.master_timestamp.strftime("%Y-%m-%d-%H-%M")
-                if dic.master_timestamp
-                else "unknown"
-            )
-            slave_ts = (
-                dic.slave_timestamp.strftime("%Y-%m-%d-%H-%M")
-                if dic.slave_timestamp
-                else "unknown"
-            )
-            dt_days = getattr(dic, "dt_days", None)
-            if dt_days is None and dic.dt_hours is not None:
-                dt_days = int(round(dic.dt_hours / 24.0))
-            filename = f"dic_{dic_id}_{master_ts}_{slave_ts}_{dt_days}days.csv"
+        # Build informative filename
+        master_ts = (
+            dic.master_timestamp.strftime("%Y-%m-%d-%H-%M")
+            if dic.master_timestamp
+            else "unknown"
+        )
+        slave_ts = (
+            dic.slave_timestamp.strftime("%Y-%m-%d-%H-%M")
+            if dic.slave_timestamp
+            else "unknown"
+        )
+        dt_days = getattr(dic, "dt_days", None)
+        if dt_days is None and dic.dt_hours is not None:
+            dt_days = int(round(dic.dt_hours / 24.0))
+        filename = f"dic_{dic_id}_{master_ts}_{slave_ts}_{dt_days}days.csv"
 
         response = HttpResponse("\n".join(csv_lines), content_type="text/csv")
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
@@ -333,34 +315,19 @@ def visualize_dic(request, dic_id: int) -> HttpResponse:
       - scale / scale_units / width / headwidth / quiver_alpha / image_alpha
       - figsize: "W,H" and dpi
     """
-    # parse params
+    # Plotting type
     plot_type = request.GET.get("plot_type", "quiver").lower()
     if plot_type not in ("quiver", "scatter"):
         return HttpResponse("Invalid plot_type. Use 'quiver' or 'scatter'.", status=400)
 
+    # Normalize by time difference if requested
+    plot_velocity = _parse_bool(request.GET.get("plot_velocity"), True)
+
+    # Plotting params
     show_background = _parse_bool(request.GET.get("background"), True)
     cmap_name = request.GET.get("cmap", "viridis")
     vmin = _parse_float(request.GET.get("vmin"), None)
     vmax = _parse_float(request.GET.get("vmax"), None)
-
-    scale_raw = request.GET.get("scale", None)
-    scale = (
-        None
-        if scale_raw is None or scale_raw.lower() == "none"
-        else _parse_float(scale_raw, None)
-    )
-    scale_units = request.GET.get("scale_units", "xy")
-    width = _parse_float(request.GET.get("width"), 0.003) or 0.003
-    headwidth = _parse_float(request.GET.get("headwidth"), 2.5) or 2.5
-    quiver_alpha = _parse_float(request.GET.get("quiver_alpha"), 1.0) or 1.0
-    image_alpha = _parse_float(request.GET.get("image_alpha"), 0.7) or 0.7
-
-    # filtering params
-    min_velocity = _parse_float(request.GET.get("min_velocity"), None)
-    filter_outliers = _parse_bool(request.GET.get("filter_outliers"), False)
-    tails_percentile = _parse_float(request.GET.get("tails_percentile"), 0.01) or 0.01
-    subsample = _parse_int(request.GET.get("subsample"), 1) or 1
-
     figsize_param = request.GET.get("figsize", "")
     if figsize_param:
         try:
@@ -372,18 +339,52 @@ def visualize_dic(request, dic_id: int) -> HttpResponse:
         figsize = (10.0, 8.0)
     dpi = _parse_int(request.GET.get("dpi"), 150) or 150
 
+    # quiver params
+    scale_raw = request.GET.get("scale", None)
+    scale = (
+        None
+        if scale_raw is None or scale_raw.lower() == "none"
+        else _parse_float(scale_raw, None)
+    )
+    scale_units = request.GET.get("scale_units", "xy")
+    width = _parse_float(request.GET.get("width"), 0.005) or 0.005
+    headwidth = _parse_float(request.GET.get("headwidth"), 2.5) or 2.5
+    quiver_alpha = _parse_float(request.GET.get("quiver_alpha"), 1.0) or 1.0
+    image_alpha = _parse_float(request.GET.get("image_alpha"), 0.7) or 0.7
+
+    # filtering params
+    filter_outliers = _parse_bool(request.GET.get("filter_outliers"), False)
+    tails_percentile = _parse_float(request.GET.get("tails_percentile"), 0.01) or 0.01
+    filter_min_velocity = _parse_float(request.GET.get("filter_min_velocity"), None)
+    subsample = _parse_int(request.GET.get("subsample"), 1) or 1
+
+    # load DIC record
     dic = get_object_or_404(DIC, id=dic_id)
 
     # load and filter data
-    x, y, u, v, mag = load_and_filter_dic(
-        dic,
+    data = read_dic_h5(dic)
+    points = data["points"]
+    vectors = data["vectors"]
+    magnitudes = data["magnitudes"]
+    x, y, u, v, mag = filter_dic_arrays(
+        points,
+        vectors,
+        magnitudes,
+        min_velocity=filter_min_velocity,
         filter_outliers=filter_outliers,
         tails_percentile=tails_percentile,
-        min_velocity=min_velocity
-        if (min_velocity is not None and min_velocity > 0)
-        else None,
         subsample=subsample,
     )
+
+    # Normalize displacement by the time difference and plot daily velocity if requested
+    dt_hours = dic.dt_hours if dic.dt_hours is not None and dic.dt_hours > 0 else 1.0
+    if plot_velocity:
+        u = u / dt_hours * 24.0  # px -> px/day
+        v = v / dt_hours * 24.0  # px -> px/day
+        mag = mag / dt_hours * 24.0  # px -> px/day
+        clabel = "Velocity Magnitude [px/day]"
+    else:
+        clabel = "Displacement Magnitude [px]"
 
     # background image (may be rotated for Tele cameras) - only rotate image, not vectors
     background_image: np.ndarray | None = None
@@ -411,7 +412,7 @@ def visualize_dic(request, dic_id: int) -> HttpResponse:
             v,
             mag,
             background_image=background_image,
-            vmin=vmin if vmin is not None else 0.0,
+            vmin=vmin,
             vmax=vmax,
             scale=scale,
             scale_units=scale_units,
@@ -420,7 +421,7 @@ def visualize_dic(request, dic_id: int) -> HttpResponse:
             quiver_alpha=quiver_alpha,
             image_alpha=image_alpha,
             cmap_name=cmap_name,
-            figsize=figsize,
+            clabel=clabel,
             dpi=dpi,
         )
     else:
@@ -432,14 +433,13 @@ def visualize_dic(request, dic_id: int) -> HttpResponse:
             vmin=vmin if vmin is not None else 0.0,
             vmax=vmax,
             cmap_name=cmap_name,
-            figsize=figsize,
             dpi=dpi,
         )
 
     # title
     if dic.master_timestamp and dic.slave_timestamp:
-        master_date = dic.master_timestamp.strftime("%Y-%m-%d %H:%M")
-        slave_date = dic.slave_timestamp.strftime("%Y-%m-%d %H:%M")
+        master_date = dic.master_timestamp.strftime("%Y-%m-%d")
+        slave_date = dic.slave_timestamp.strftime("%Y-%m-%d")
         title = f"DIC #{dic_id}: {master_date} → {slave_date}"
         if dic.dt_hours:
             title += f" ({dic.dt_hours} hours)"
@@ -1075,206 +1075,3 @@ def collapses_geojson(request) -> HttpResponse:
 
 
 # ===================== VELOCITY TIMESERIES VIEWER =======================
-# @require_http_methods(["GET"])
-# def velocity_timeseries_viewer(request) -> HttpResponse:
-#     """
-#     Interactive viewer to click on image and see velocity time series at that point.
-
-#     Query params:
-#       - image_id: base image to display
-#       - x, y: clicked coordinates (optional, for initial plot)
-#       - camera_id: filter DIC by camera
-#       - days_back: how many days to look back (default 30)
-#       - search_radius: max distance in pixels to find nearest DIC node (default 10)
-#     """
-#     image_id = request.GET.get("image_id")
-#     x_click = _parse_float(request.GET.get("x"), None)
-#     y_click = _parse_float(request.GET.get("y"), None)
-#     camera_id = request.GET.get("camera_id")
-#     days_back = _parse_int(request.GET.get("days_back"), 30) or 30
-#     search_radius = _parse_float(request.GET.get("search_radius"), 10.0) or 10.0
-
-#     # Get base image
-#     if image_id:
-#         base_image = get_object_or_404(Image, id=int(image_id))
-#     else:
-#         # Default to most recent image
-#         base_image = Image.objects.order_by("-datetime").first()
-#         if not base_image:
-#             return HttpResponse("No images available", status=404)
-
-#     # Load background image
-#     if not os.path.exists(base_image.file_path):
-#         return HttpResponse("Image file not found", status=404)
-
-#     try:
-#         pil_img = PILImage.open(base_image.file_path)
-#         if base_image.rotation and base_image.rotation != 0:
-#             pil_img = pil_img.rotate(-base_image.rotation, expand=True)
-#         img_array = np.array(pil_img)
-#     except Exception as e:
-#         return HttpResponse(f"Could not load image: {e}", status=500)
-
-#     # Time series data (if coordinates provided)
-#     ts_data = None
-#     if x_click is not None and y_click is not None:
-#         ts_data = _extract_velocity_timeseries(
-#             camera_id=base_image.camera_id if not camera_id else int(camera_id),
-#             x=x_click,
-#             y=y_click,
-#             days_back=days_back,
-#             search_radius=search_radius,
-#             reference_date=base_image.datetime.date(),
-#         )
-
-#     context = {
-#         "base_image": base_image,
-#         "image_width": img_array.shape[1],
-#         "image_height": img_array.shape[0],
-#         "x_click": x_click,
-#         "y_click": y_click,
-#         "ts_data": ts_data,
-#         "days_back": days_back,
-#         "search_radius": search_radius,
-#     }
-
-#     return render(request, "ppcx_app/velocity_timeseries.html", context)
-
-
-# @require_http_methods(["POST"])
-# @csrf_protect
-# def get_velocity_timeseries_data(request) -> JsonResponse:
-#     """
-#     API endpoint to fetch velocity time series data for a clicked point.
-
-#     POST JSON body:
-#       {
-#         "x": float,
-#         "y": float,
-#         "camera_id": int,
-#         "days_back": int (optional, default 30),
-#         "search_radius": float (optional, default 10.0)
-#       }
-
-#     Returns JSON with plotly-compatible data.
-#     """
-#     try:
-#         body = json.loads(request.body.decode("utf-8"))
-#         x = float(body["x"])
-#         y = float(body["y"])
-#         camera_id = int(body["camera_id"])
-#         days_back = int(body.get("days_back", 30))
-#         search_radius = float(body.get("search_radius", 10.0))
-#         reference_date = body.get("reference_date")  # optional YYYY-MM-DD
-
-#         if reference_date:
-#             reference_date = datetime.fromisoformat(reference_date).date()
-#         else:
-#             reference_date = datetime.now().date()
-
-#     except (KeyError, ValueError, json.JSONDecodeError) as e:
-#         return JsonResponse({"error": f"Invalid request: {e}"}, status=400)
-
-#     ts_data = _extract_velocity_timeseries(
-#         camera_id=camera_id,
-#         x=x,
-#         y=y,
-#         days_back=days_back,
-#         search_radius=search_radius,
-#         reference_date=reference_date,
-#     )
-
-#     if ts_data is None or len(ts_data["dates"]) == 0:
-#         return JsonResponse({"error": "No data found near clicked point"}, status=404)
-
-#     return JsonResponse(ts_data)
-
-
-# def _extract_velocity_timeseries(
-#     camera_id: int,
-#     x: float,
-#     y: float,
-#     days_back: int,
-#     search_radius: float,
-#     reference_date,
-# ) -> dict | None:
-#     """
-#     Extract velocity time series for a point using KDTree search.
-
-#     Returns dict with:
-#       - dates: list of datetime strings
-#       - velocities: list of magnitudes
-#       - u_components: list of u values
-#       - v_components: list of v values
-#       - distances: list of distances from clicked point to nearest node
-#       - dt_hours: list of time differences
-#     """
-#     from datetime import timedelta
-
-#     start_date = reference_date - timedelta(days=days_back)
-
-#     # Query DICs for the camera and time range
-#     dics = (
-#         DIC.objects.filter(
-#             master_image__camera_id=camera_id,
-#             master_timestamp__date__gte=start_date,
-#             master_timestamp__date__lte=reference_date,
-#         )
-#         .select_related("master_image")
-#         .order_by("master_timestamp")
-#     )
-
-#     if not dics.exists():
-#         return None
-
-#     results = {
-#         "dates": [],
-#         "velocities": [],
-#         "u_components": [],
-#         "v_components": [],
-#         "distances": [],
-#         "dt_hours": [],
-#         "master_dates": [],
-#         "slave_dates": [],
-#     }
-
-#     for dic in dics:
-#         if not dic.result_file_path or not os.path.exists(dic.result_file_path):
-#             continue
-
-#         try:
-#             with h5py.File(dic.result_file_path, "r") as f:
-#                 points = f["points"][()] if "points" in f else None
-#                 vectors = f["vectors"][()] if "vectors" in f else None
-#                 magnitudes = f["magnitudes"][()] if "magnitudes" in f else None
-
-#             if points is None or magnitudes is None or len(points) == 0:
-#                 continue
-
-#             # Build KDTree and find nearest point
-#             tree = KDTree(points)
-#             distance, idx = tree.query([x, y], k=1)
-
-#             if distance > search_radius:
-#                 continue
-
-#             # Extract velocity at nearest point
-#             velocity = float(magnitudes[idx])
-#             u = float(vectors[idx, 0]) if vectors is not None else 0.0
-#             v = float(vectors[idx, 1]) if vectors is not None else 0.0
-
-#             results["dates"].append(dic.master_timestamp.isoformat())
-#             results["master_dates"].append(dic.master_timestamp.isoformat())
-#             results["slave_dates"].append(
-#                 dic.slave_timestamp.isoformat() if dic.slave_timestamp else None
-#             )
-#             results["velocities"].append(velocity)
-#             results["u_components"].append(u)
-#             results["v_components"].append(v)
-#             results["distances"].append(float(distance))
-#             results["dt_hours"].append(dic.dt_hours if dic.dt_hours else None)
-
-#         except Exception:
-#             continue
-
-#     return results if len(results["dates"]) > 0 else None

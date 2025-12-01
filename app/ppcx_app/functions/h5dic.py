@@ -5,13 +5,12 @@ from pathlib import Path
 import h5py
 import numpy as np
 from django.http import Http404
-
 from ppcx_app.models import DIC
 
 logger = logging.getLogger(__name__)
 
 
-def read_dic_h5(dic: DIC) -> tuple[np.ndarray, np.ndarray | None, np.ndarray]:
+def read_dic_h5(dic: DIC) -> dict[str, np.ndarray]:
     """
     Read the required datasets from the DIC HDF5 file.
 
@@ -24,16 +23,29 @@ def read_dic_h5(dic: DIC) -> tuple[np.ndarray, np.ndarray | None, np.ndarray]:
 
     try:
         with h5py.File(h5, "r") as f:
-            points = f["points"][()] if "points" in f else None
-            vectors = f["vectors"][()] if "vectors" in f else None
+            points = f["points"][()]
+            vectors = f["vectors"][()]
             magnitudes = f["magnitudes"][()] if "magnitudes" in f else None
     except Exception as e:
         raise Http404(f"Could not read DIC HDF5 file: {e}") from e
 
-    if points is None or magnitudes is None:
-        raise Http404("DIC HDF5 missing required datasets ('points' or 'magnitudes')")
+    if points is None or vectors is None:
+        raise Http404("DIC HDF5 missing required datasets ('points' or 'vectors')")
 
-    return points, vectors, magnitudes
+    if len(points) == 0:
+        raise Http404("DIC HDF5 contains empty datasets")
+
+    # Compute magnitudes if missing
+    if magnitudes is None:
+        magnitudes = np.sqrt(np.sum(np.square(vectors), axis=1))
+
+    data = {
+        "points": points,
+        "vectors": vectors,
+        "magnitudes": magnitudes,
+    }
+
+    return data
 
 
 def create_dic_h5(dic_data: dict, h5_file_path: Path) -> bool:
@@ -180,11 +192,12 @@ def load_and_filter_dic(
     Returns: x, y, u, v, mag (all numpy arrays float).
     Raises Http404 on errors or missing required datasets.
     """
-    points, vectors, magnitudes = read_dic_h5(dic)
+    data = read_dic_h5(dic)
+
     return filter_dic_arrays(
-        points,
-        vectors,
-        magnitudes,
+        data["points"],
+        data["vectors"],
+        data["magnitudes"],
         filter_outliers=filter_outliers,
         tails_percentile=tails_percentile,
         min_velocity=min_velocity,

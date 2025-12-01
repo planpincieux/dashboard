@@ -17,15 +17,16 @@ def plot_dic_vectors(
     v: np.ndarray,
     magnitudes: np.ndarray,
     background_image: np.ndarray | PILImage.Image | None = None,
-    vmin: float = 0.0,
+    vmin: float | None = None,
     vmax: float | None = None,
     scale: float | None = None,
     scale_units: str = "xy",
-    width: float = 0.003,
+    width: float = 0.005,
     headwidth: float = 2.5,
     quiver_alpha: float = 1,
     image_alpha: float = 0.7,
     cmap_name: str = "viridis",
+    clabel: str = "Magnitude",
     figsize: tuple[int, int] = (12, 10),
     dpi: int = 300,
     ax: Axes | None = None,
@@ -42,8 +43,9 @@ def plot_dic_vectors(
         raise ValueError("Input arrays are empty")
 
     # Set up color normalization
+    min_magnitude = vmin if vmin is not None else 0.0
     max_magnitude = vmax if vmax is not None else np.percentile(magnitudes, 99)
-    norm = Normalize(vmin=vmin, vmax=max_magnitude)
+    norm = Normalize(vmin=min_magnitude, vmax=max_magnitude)
 
     # Set up figure and axes
     if ax is not None:
@@ -74,7 +76,7 @@ def plot_dic_vectors(
 
     # Add colorbar
     cbar = fig.colorbar(q, ax=ax)
-    cbar.set_label("Displacement Magnitude (pixels)")
+    cbar.set_label(clabel)
 
     # Set title and labels
     if title:
