@@ -4,8 +4,8 @@ services:
     container_name: planpincieux-db
     restart: unless-stopped
     environment: 
-      POSTGRES_DB: planpincieux
-      POSTGRES_USER: postgres
+      POSTGRES_DB: ${DB_NAME:-planpincieux}
+      POSTGRES_USER: ${DB_USER:-postgres}
     volumes:
       - db_data:/var/lib/postgresql/data
     networks: [ppcx_net]
@@ -22,22 +22,21 @@ services:
     restart: unless-stopped
     # For developing
     command: python manage.py runserver 0.0.0.0:8000
-
     # For production (use gunicorn)
     # command: sh -c 'gunicorn planpincieux.wsgi:application -b 0.0.0.0:8000 -w ${GUNICORN_WORKERS:-3} --access-logfile - --error-logfile -'
 
     depends_on: [db]
     environment:
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_NAME: planpincieux
-      DB_USER: postgres
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-planpincieux}
+      DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD_FILE: /run/secrets/db_password # provided via Docker secret
       SECRET_KEY_FILE: /run/secrets/django_secret_key # provided via Docker secret
-      DJANGO_SETTINGS_MODULE: planpincieux.settings
-      ALLOWED_HOSTS: localhost,127.0.0.1,0.0.0.0,150.145.51.193,100.93.90.61
-      DEBUG: True
-      GUNICORN_WORKERS: "4"
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-planpincieux.settings}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,0.0.0.0,150.145.51.193,100.93.90.61}
+      DEBUG: ${DEBUG:-True}
+      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-4}"
 
     volumes:
       - ./app:/ppcx/app:rw # Used to edit code on host and directly see changes in container. Not needed in production.
@@ -51,10 +50,6 @@ services:
     secrets:
       - db_password
       - django_secret_key
-
-networks:
-  ppcx_net:
-    driver: bridge
 
 volumes:
   db_data:
@@ -70,8 +65,12 @@ volumes:
           device: /home/fioli/storage/fms
           o: bind
 
+networks:
+  ppcx_net:
+    driver: bridge
+
 secrets:
  db_password: 
-  file: ~/secrets/db_password
+  file: ${DB_SECRET_FILE:-~/secrets/db_password}
  django_secret_key: 
-  file: ~/secrets/django_secret_key
+  file: ${DJANGO_SECRET_KEY_FILE:-~/secrets/django_secret_key}
