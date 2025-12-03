@@ -148,6 +148,34 @@ def upload_dic_h5(request, h5_dir: str | None = None) -> JsonResponse:
       - notes: str
       - dt_hours: int (auto-calculated if not provided)
     """
+
+    # Helper function to get image by date or ID
+    def get_image(
+        id_key: str,
+        date_key: str,
+        camera_name: str = "PPCX_Tele",
+        take_first: bool = True,
+    ) -> Image | None:
+        if id_key in data:
+            return Image.objects.filter(
+                id=data[id_key], camera__camera_name=camera_name
+            ).first()
+        if date_key in data:
+            try:
+                date = datetime.strptime(data[date_key], "%Y-%m-%d").date()
+                images = Image.objects.filter(
+                    acquisition_timestamp__date=date,
+                    camera__camera_name=camera_name,
+                ).all()
+                if take_first:
+                    return images.first()
+                else:
+                    mid_id = len(images) // 2
+                    return images[mid_id]
+            except ValueError:
+                return None
+        return None
+
     try:
         h5_directory = Path(h5_dir) if h5_dir else H5_FILES_DIR
         data = json.loads(request.body)
@@ -157,30 +185,23 @@ def upload_dic_h5(request, h5_dir: str | None = None) -> JsonResponse:
                 {"error": "Missing required field: dic_data"}, status=400
             )
 
-        # Helper function to get image by date or ID
-        def get_image(
-            id_key: str, date_key: str, take_first: bool = True
-        ) -> Image | None:
-            if id_key in data:
-                return Image.objects.filter(id=data[id_key]).first()
-            if date_key in data:
-                try:
-                    date = datetime.strptime(data[date_key], "%Y-%m-%d").date()
-                    images = Image.objects.filter(
-                        acquisition_timestamp__date=date
-                    ).all()
-                    if take_first:
-                        return images.first()
-                    else:
-                        mid_id = len(images) // 2
-                        return images[mid_id]
-                except ValueError:
-                    return None
-            return None
+        # Get the camera name if provided for searching images
+        camera_name = data.get("camera_name", "PPCX_Tele")
+        take_first = _parse_bool(data.get("take_first_image"), True)
 
         # Get master and slave images
-        master_image = get_image("master_image_id", "master_date", take_first=False)
-        slave_image = get_image("slave_image_id", "slave_date")
+        master_image = get_image(
+            "master_image_id",
+            "master_date",
+            camera_name=camera_name,
+            take_first=take_first,
+        )
+        slave_image = get_image(
+            "slave_image_id",
+            "slave_date",
+            camera_name=camera_name,
+            take_first=take_first,
+        )
         if not master_image or not slave_image:
             return JsonResponse(
                 {"error": "Master or slave image not found"}, status=404
