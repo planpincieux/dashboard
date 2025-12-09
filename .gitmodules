@@ -1,0 +1,3 @@
+[submodule "tsexplore_app"]
+	path = tsexplore_app
+	url = git@github.com:franioli/tsexplore_app.git
