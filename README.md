@@ -6,6 +6,11 @@ Containerized Django + PosgreSQL (+PostGIS) stack with two main services:
 
 ## Setup and Configuration
 
+Clone the repository:
+```bash
+git clone --recurse-submodules git@github.com:planpincieux/dashboard.git ppcx-dashboard
+cd ppcx-dashboard
+```
 
 ### 1. Set up secrets
 

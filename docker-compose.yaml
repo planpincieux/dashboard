@@ -51,6 +51,24 @@ services:
       - db_password
       - django_secret_key
 
+  tsexplore:
+    build:
+      context: ./tsexplore_app
+      dockerfile: Dockerfile
+    container_name: tsexplore
+    environment:
+      DATA_DIR: /ppcx/data
+    volumes:
+      - ./tsexplore_app:/app:rw        # allow live edits in container
+      - dic_data:/ppcx/data:ro        # share dataset volume used by Django
+    ports:
+      - "8001:8000"
+    depends_on:
+      - db
+      - web
+    networks:
+      - ppcx_net
+
 volumes:
   db_data:
   dic_data:
