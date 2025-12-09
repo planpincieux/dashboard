@@ -59,10 +59,10 @@ services:
     environment:
       DATA_DIR: /ppcx/data
     volumes:
-      - ./tsexplore_app:/app:rw        # allow live edits in container
-      - dic_data:/ppcx/data:ro        # share dataset volume used by Django
+      - ./tsexplore_app:/app:rw     # allow live edits in container
+      - dic_data:/ppcx/data:ro      # share dataset volume used by Django
     ports:
-      - "8001:8000"
+      - "8002:8000"   # make TS app available on host:8002 (8001 is already reserved in the host by CVAT)
     depends_on:
       - db
       - web
