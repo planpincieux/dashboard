@@ -40,9 +40,9 @@ services:
 
     volumes:
       - ./app:/ppcx/app:rw # Used to edit code on host and directly see changes in container. Not needed in production.
-      - dic_data:/ppcx/data:rw # Persistent volume to store h5 DIC data
+      - dic_data:/ppcx/data:rw # Persistent volume to store h5 DIC data # TODO: move to /data/dic_data for consistency
       - ppcx_data:/data/ppcx_data:ro # Read-only mount of GMG FTP datax
-      - fms_data:/ppcx/fms_data:ro # Read-only mount of FMS data # TODO: move it to /data/fms_data for consistency
+      - fms_data:/data/fms_data:ro # Read-only mount of FMS data # NOTE: moved to /data/fms_data for consistency # TODO: change path in code
     ports:
       - "8080:8000" # For production with gunicorn
       - "9999:9999" # For developing with runserver and debug with vscode
@@ -56,8 +56,11 @@ services:
       context: ./tsexplore_app
       dockerfile: Dockerfile
     container_name: tsexplore
+    restart: unless-stopped
     environment:
       DATA_DIR: /ppcx/data
+      # use the project environment stored outside /app so mounted source won't break it
+      UV_PROJECT_ENVIRONMENT: /opt/.venv
     volumes:
       - ./tsexplore_app:/app:rw     # allow live edits in container
       - dic_data:/ppcx/data:ro      # share dataset volume used by Django
