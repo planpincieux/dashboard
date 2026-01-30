@@ -18,7 +18,12 @@ from django.views.decorators.http import require_http_methods
 from PIL import Image
 from PIL import Image as PILImage
 
-from ppcx_app.functions.h5dic import create_dic_h5, filter_dic_arrays, read_dic_h5
+from ppcx_app.functions.h5dic import (
+    create_dic_h5,
+    filter_dic_arrays,
+    load_and_filter_dic,
+    read_dic_h5,
+)
 from ppcx_app.functions.visualization import (
     draw_quiver_on_image_cv2,
     plot_dic_scatter,
